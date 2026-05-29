@@ -1,0 +1,62 @@
+[
+  {
+    "content": "Set up project: install Python/Node deps, configure SQLAlchemy models, DB init",
+    "id": "1",
+    "status": "completed"
+  },
+  {
+    "content": "Build auth system: User model, JWT, bcrypt, login/register/logout routes, middleware",
+    "id": "2",
+    "status": "completed"
+  },
+  {
+    "content": "Build Lead + Activity models and CRUD API routes with business logic (scoring, status transitions)",
+    "id": "3",
+    "status": "completed"
+  },
+  {
+    "content": "Build CSV import/export API routes",
+    "id": "4",
+    "status": "completed"
+  },
+  {
+    "content": "Build dashboard metrics API route",
+    "id": "5",
+    "status": "completed"
+  },
+  {
+    "content": "Build frontend: auth pages, routing, layout, and API client",
+    "id": "6",
+    "status": "completed"
+  },
+  {
+    "content": "Build frontend: Dashboard page with KPI cards and follow-up widgets",
+    "id": "7",
+    "status": "completed"
+  },
+  {
+    "content": "Build frontend: Leads list page with search/filter/sort",
+    "id": "8",
+    "status": "completed"
+  },
+  {
+    "content": "Build frontend: Pipeline kanban page",
+    "id": "9",
+    "status": "completed"
+  },
+  {
+    "content": "Build frontend: Lead create/detail pages with scoring and timeline",
+    "id": "10",
+    "status": "completed"
+  },
+  {
+    "content": "Build frontend: CSV import/export pages",
+    "id": "11",
+    "status": "completed"
+  },
+  {
+    "content": "Seed data + test scoring/status logic + verify end-to-end",
+    "id": "12",
+    "status": "completed"
+  }
+]

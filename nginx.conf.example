@@ -1,0 +1,71 @@
+# ─── Nginx config for CloudPanel / Leverage CRM Lite ───────────────────────
+#
+# If using CloudPanel:
+#   1. Create a new site (Python App) in CloudPanel for your domain
+#   2. Replace the generated nginx vhost with this template
+#   3. Adjust server_name, paths, and upstream port as needed
+#
+# If using plain nginx:
+#   1. Copy to /etc/nginx/sites-available/leverage-crm
+#   2. Symlink to /etc/nginx/sites-enabled/
+#   3. nginx -t && systemctl reload nginx
+
+upstream leverage_crm {
+    server 127.0.0.1:8000;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name crm.yourdomain.com;
+
+    # Redirect HTTP → HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name crm.yourdomain.com;
+
+    # ─── SSL (CloudPanel manages this — keep its ssl directives) ──────────
+    # ssl_certificate /etc/nginx/ssl/crm.yourdomain.com.pem;
+    # ssl_certificate_key /etc/nginx/ssl/crm.yourdomain.com.key;
+
+    root /var/www/leverage-crm/dist;
+    index index.html;
+
+    # ─── Security headers ─────────────────────────────────────────────────
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # ─── API proxy ────────────────────────────────────────────────────────
+    location /api/ {
+        proxy_pass http://leverage_crm;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        client_max_body_size 20M;  # For CSV imports
+    }
+
+    # ─── Static assets (long cache) ──────────────────────────────────────
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # ─── SPA fallback ────────────────────────────────────────────────────
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ─── Deny dotfiles ───────────────────────────────────────────────────
+    location ~ /\. {
+        deny all;
+    }
+}

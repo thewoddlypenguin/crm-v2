@@ -1,0 +1,184 @@
+import type {
+  AuthResponse,
+  DashboardData,
+  ImportResult,
+  Lead,
+  LeadsResponse,
+  LeadStatus,
+  PipelineData,
+  Activity,
+  PriorityTier,
+  Segment,
+} from "./types";
+
+const BASE = "/api";
+
+function getToken(): string | null {
+  return localStorage.getItem("crm_token");
+}
+
+function authHeaders(): HeadersInit {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+      ...options.headers,
+    },
+  });
+  if (res.status === 401) {
+    localStorage.removeItem("crm_token");
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(body.detail || "Request failed");
+  }
+  return res.json();
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────
+
+export async function register(email: string, password: string, full_name?: string): Promise<AuthResponse> {
+  return request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password, full_name }),
+  });
+}
+
+export async function login(email: string, password: string): Promise<AuthResponse> {
+  return request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function getMe(): Promise<{ id: string; email: string; full_name: string | null }> {
+  return request("/auth/me");
+}
+
+// ─── Leads ───────────────────────────────────────────────────────────────
+
+export async function listLeads(params?: {
+  search?: string;
+  status?: LeadStatus;
+  priority?: PriorityTier;
+  segment?: Segment;
+  sort_by?: string;
+  sort_dir?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<LeadsResponse> {
+  const sp = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== "") sp.set(k, String(v));
+    });
+  }
+  return request(`/leads?${sp.toString()}`);
+}
+
+export async function createLead(data: Record<string, unknown>): Promise<Lead> {
+  return request("/leads", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function getLead(id: string): Promise<Lead> {
+  return request(`/leads/${id}`);
+}
+
+export async function updateLead(id: string, data: Record<string, unknown>): Promise<Lead> {
+  return request(`/leads/${id}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function deleteLead(id: string): Promise<void> {
+  await request(`/leads/${id}`, { method: "DELETE" });
+}
+
+export async function changeStatus(id: string, status: LeadStatus): Promise<Lead> {
+  return request(`/leads/${id}/status`, { method: "POST", body: JSON.stringify({ status }) });
+}
+
+export async function bulkStatusChange(ids: string[], status: LeadStatus): Promise<{ updated: number }> {
+  return request("/leads/bulk-status", { method: "POST", body: JSON.stringify({ lead_ids: ids, status }) });
+}
+
+// ─── Activities ──────────────────────────────────────────────────────────
+
+export async function listActivities(leadId: string): Promise<Activity[]> {
+  return request(`/leads/${leadId}/activities`);
+}
+
+export async function createActivity(leadId: string, data: { activity_type: string; body?: string; occurred_at?: string }): Promise<Activity> {
+  return request(`/leads/${leadId}/activities`, { method: "POST", body: JSON.stringify(data) });
+}
+
+// ─── Dashboard ───────────────────────────────────────────────────────────
+
+export async function getDashboard(): Promise<DashboardData> {
+  return request("/dashboard");
+}
+
+// ─── Pipeline ────────────────────────────────────────────────────────────
+
+export async function getPipeline(): Promise<PipelineData> {
+  return request("/pipeline");
+}
+
+// ─── CSV Import/Export ───────────────────────────────────────────────────
+
+export async function importCSV(file: File): Promise<ImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${BASE}/import/csv`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(body.detail || "Import failed");
+  }
+  return res.json();
+}
+
+export function exportCSVUrl(params?: {
+  search?: string;
+  status?: LeadStatus;
+  priority?: PriorityTier;
+  segment?: Segment;
+}): string {
+  const sp = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== "") sp.set(k, String(v));
+    });
+  }
+  const token = getToken();
+  // Return direct URL for download - need to add token as query param or use fetch
+  return `${BASE}/export/csv?${sp.toString()}`;
+}
+
+export async function downloadCSV(params?: {
+  search?: string;
+  status?: LeadStatus;
+  priority?: PriorityTier;
+  segment?: Segment;
+}): Promise<Blob> {
+  const sp = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== "") sp.set(k, String(v));
+    });
+  }
+  const res = await fetch(`${BASE}/export/csv?${sp.toString()}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Export failed");
+  return res.blob();
+}

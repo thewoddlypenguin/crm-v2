@@ -1,0 +1,22 @@
+#!/bin/bash
+# Leverage CRM Lite — systemd service unit file
+# Install: sudo cp leverage-crm.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable leverage-crm
+#          sudo systemctl start leverage-crm
+
+[Unit]
+Description=Leverage CRM Lite
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/leverage-crm
+EnvironmentFile=/var/www/leverage-crm/.env
+ExecStart=/var/www/leverage-crm/.venv/bin/uvicorn app:asgi --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

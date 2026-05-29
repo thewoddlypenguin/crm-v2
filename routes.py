@@ -1,0 +1,688 @@
+"""API routes for Leverage CRM Lite."""
+
+import csv
+import io
+import os
+from datetime import datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import func, and_
+from sqlalchemy.orm import Session
+
+from auth import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
+from business import apply_status_transition, compute_next_follow_up, recalculate_scores
+from db import get_db
+from models import Activity, Lead, User
+
+api = APIRouter()
+
+
+# ─── Pydantic Schemas ────────────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    full_name: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: dict
+
+
+class LeadCreate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    full_name: Optional[str] = None
+    business_name: Optional[str] = None
+    segment: Optional[str] = None
+    niche: Optional[str] = None
+    website_url: Optional[str] = None
+    email: Optional[str] = None
+    contact_path: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    location_text: Optional[str] = None
+    team_size_estimate: Optional[int] = None
+    source_url: Optional[str] = None
+    personalization_note: Optional[str] = None
+    outreach_angle: Optional[str] = None
+    offer_clarity_score: Optional[int] = Field(None, ge=0, le=2)
+    bottleneck_evidence_score: Optional[int] = Field(None, ge=0, le=2)
+    buying_signal_score: Optional[int] = Field(None, ge=0, le=2)
+    decision_maker_access_score: Optional[int] = Field(None, ge=0, le=2)
+    contactability_score: Optional[int] = Field(None, ge=0, le=2)
+    strategic_fit_score: Optional[int] = Field(None, ge=0, le=2)
+
+
+class LeadUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    full_name: Optional[str] = None
+    business_name: Optional[str] = None
+    segment: Optional[str] = None
+    niche: Optional[str] = None
+    website_url: Optional[str] = None
+    email: Optional[str] = None
+    contact_path: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    location_text: Optional[str] = None
+    team_size_estimate: Optional[int] = None
+    source_url: Optional[str] = None
+    personalization_note: Optional[str] = None
+    outreach_angle: Optional[str] = None
+    offer_clarity_score: Optional[int] = Field(None, ge=0, le=2)
+    bottleneck_evidence_score: Optional[int] = Field(None, ge=0, le=2)
+    buying_signal_score: Optional[int] = Field(None, ge=0, le=2)
+    decision_maker_access_score: Optional[int] = Field(None, ge=0, le=2)
+    contactability_score: Optional[int] = Field(None, ge=0, le=2)
+    strategic_fit_score: Optional[int] = Field(None, ge=0, le=2)
+    outcome_note: Optional[str] = None
+
+
+class StatusChangeRequest(BaseModel):
+    status: str
+
+
+class ActivityCreate(BaseModel):
+    activity_type: str
+    body: Optional[str] = None
+    occurred_at: Optional[datetime] = None
+
+
+class BulkStatusChange(BaseModel):
+    lead_ids: list[str]
+    status: str
+
+
+def lead_to_dict(lead: Lead) -> dict:
+    return {
+        "id": lead.id,
+        "owner_user_id": lead.owner_user_id,
+        "first_name": lead.first_name,
+        "last_name": lead.last_name,
+        "full_name": lead.full_name,
+        "business_name": lead.business_name,
+        "segment": lead.segment,
+        "niche": lead.niche,
+        "website_url": lead.website_url,
+        "email": lead.email,
+        "contact_path": lead.contact_path,
+        "linkedin_url": lead.linkedin_url,
+        "location_text": lead.location_text,
+        "team_size_estimate": lead.team_size_estimate,
+        "source_url": lead.source_url,
+        "personalization_note": lead.personalization_note,
+        "outreach_angle": lead.outreach_angle,
+        "offer_clarity_score": lead.offer_clarity_score,
+        "bottleneck_evidence_score": lead.bottleneck_evidence_score,
+        "buying_signal_score": lead.buying_signal_score,
+        "decision_maker_access_score": lead.decision_maker_access_score,
+        "contactability_score": lead.contactability_score,
+        "strategic_fit_score": lead.strategic_fit_score,
+        "total_score": lead.total_score,
+        "priority_tier": lead.priority_tier,
+        "status": lead.status,
+        "last_contacted_at": lead.last_contacted_at.isoformat() if lead.last_contacted_at else None,
+        "follow_up_count": lead.follow_up_count,
+        "next_follow_up_at": lead.next_follow_up_at.isoformat() if lead.next_follow_up_at else None,
+        "outcome_note": lead.outcome_note,
+        "created_at": lead.created_at.isoformat() if lead.created_at else None,
+        "updated_at": lead.updated_at.isoformat() if lead.updated_at else None,
+    }
+
+
+def activity_to_dict(a: Activity) -> dict:
+    return {
+        "id": a.id,
+        "lead_id": a.lead_id,
+        "user_id": a.user_id,
+        "activity_type": a.activity_type,
+        "body": a.body,
+        "occurred_at": a.occurred_at.isoformat() if a.occurred_at else None,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+    }
+
+
+# ─── Auth Routes ─────────────────────────────────────────────────────────────
+
+@api.post("/auth/register", response_model=AuthResponse)
+def register(req: RegisterRequest, db: Session = Depends(get_db)):
+    existing = db.query(User).filter(User.email == req.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = User(
+        email=req.email,
+        password_hash=hash_password(req.password),
+        full_name=req.full_name,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_access_token(user.id, user.email)
+    return AuthResponse(
+        token=token,
+        user={"id": user.id, "email": user.email, "full_name": user.full_name},
+    )
+
+
+@api.post("/auth/login", response_model=AuthResponse)
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email).first()
+    if not user or not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = create_access_token(user.id, user.email)
+    return AuthResponse(
+        token=token,
+        user={"id": user.id, "email": user.email, "full_name": user.full_name},
+    )
+
+
+@api.get("/auth/me")
+def get_me(current_user: User = Depends(get_current_user)):
+    return {"id": current_user.id, "email": current_user.email, "full_name": current_user.full_name}
+
+
+# ─── Lead CRUD ───────────────────────────────────────────────────────────────
+
+@api.get("/leads")
+def list_leads(
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    segment: Optional[str] = None,
+    sort_by: Optional[str] = "total_score",
+    sort_dir: Optional[str] = "desc",
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Lead).filter(Lead.owner_user_id == current_user.id)
+
+    if search:
+        search_lower = f"%{search.lower()}%"
+        q = q.filter(
+            (func.lower(Lead.full_name).like(search_lower))
+            | (func.lower(Lead.business_name).like(search_lower))
+            | (func.lower(Lead.email).like(search_lower))
+        )
+    if status:
+        q = q.filter(Lead.status == status)
+    if priority:
+        q = q.filter(Lead.priority_tier == priority)
+    if segment:
+        q = q.filter(Lead.segment == segment)
+
+    # Sorting
+    sort_col = None
+    if sort_by == "total_score":
+        sort_col = Lead.total_score
+    elif sort_by == "next_follow_up_at":
+        sort_col = Lead.next_follow_up_at
+    elif sort_by == "created_at":
+        sort_col = Lead.created_at
+    elif sort_by == "last_contacted_at":
+        sort_col = Lead.last_contacted_at
+    else:
+        sort_col = Lead.total_score
+
+    if sort_dir == "asc":
+        q = q.order_by(sort_col.asc().nulls_last())
+    else:
+        q = q.order_by(sort_col.desc().nulls_last())
+
+    total = q.count()
+    leads = q.offset((page - 1) * page_size).limit(page_size).all()
+    return {"total": total, "page": page, "page_size": page_size, "items": [lead_to_dict(l) for l in leads]}
+
+
+@api.post("/leads", status_code=201)
+def create_lead(req: LeadCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = Lead(
+        owner_user_id=current_user.id,
+        **{k: v for k, v in req.model_dump().items() if v is not None},
+    )
+    # Auto-generate full_name if not provided
+    if not lead.full_name and (lead.first_name or lead.last_name):
+        lead.full_name = f"{lead.first_name or ''} {lead.last_name or ''}".strip()
+
+    recalculate_scores(lead)
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+    return lead_to_dict(lead)
+
+
+@api.get("/leads/{lead_id}")
+def get_lead(lead_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return lead_to_dict(lead)
+
+
+@api.put("/leads/{lead_id}")
+def update_lead(lead_id: str, req: LeadUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    for k, v in updates.items():
+        setattr(lead, k, v)
+
+    # Auto-generate full_name
+    if lead.first_name or lead.last_name:
+        lead.full_name = f"{lead.first_name or ''} {lead.last_name or ''}".strip()
+
+    # Check if any score field changed
+    score_fields = {
+        "offer_clarity_score", "bottleneck_evidence_score", "buying_signal_score",
+        "decision_maker_access_score", "contactability_score", "strategic_fit_score",
+    }
+    if score_fields & updates.keys():
+        recalculate_scores(lead)
+
+    db.commit()
+    db.refresh(lead)
+    return lead_to_dict(lead)
+
+
+@api.delete("/leads/{lead_id}")
+def delete_lead(lead_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    db.query(Activity).filter(Activity.lead_id == lead_id).delete()
+    db.delete(lead)
+    db.commit()
+    return {"status": "deleted"}
+
+
+# ─── Status Transition ───────────────────────────────────────────────────────
+
+VALID_STATUSES = {"NEW", "SCORED", "READY_TO_CONTACT", "CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON", "CLIENT", "LOST", "NURTURE"}
+
+
+@api.post("/leads/{lead_id}/status")
+def change_status(lead_id: str, req: StatusChangeRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if req.status not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {req.status}")
+
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    old_status = lead.status
+    activity_body = apply_status_transition(lead, req.status)
+
+    # Write activity
+    activity = Activity(
+        lead_id=lead.id,
+        user_id=current_user.id,
+        activity_type="STATUS_CHANGE",
+        body=activity_body,
+    )
+    db.add(activity)
+    db.commit()
+    db.refresh(lead)
+    return lead_to_dict(lead)
+
+
+@api.post("/leads/bulk-status")
+def bulk_status_change(req: BulkStatusChange, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if req.status not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {req.status}")
+
+    leads = db.query(Lead).filter(
+        Lead.id.in_(req.lead_ids),
+        Lead.owner_user_id == current_user.id,
+    ).all()
+
+    now = datetime.utcnow()
+    for lead in leads:
+        activity_body = apply_status_transition(lead, req.status, now=now)
+        db.add(Activity(
+            lead_id=lead.id,
+            user_id=current_user.id,
+            activity_type="STATUS_CHANGE",
+            body=activity_body,
+            occurred_at=now,
+        ))
+
+    db.commit()
+    return {"updated": len(leads)}
+
+
+# ─── Activities ──────────────────────────────────────────────────────────────
+
+VALID_ACTIVITY_TYPES = {"NOTE", "STATUS_CHANGE", "OUTREACH_SENT", "FOLLOW_UP_SENT", "REPLY_RECEIVED", "CALL_BOOKED", "OTHER"}
+
+
+@api.get("/leads/{lead_id}/activities")
+def list_activities(lead_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    activities = db.query(Activity).filter(Activity.lead_id == lead_id).order_by(Activity.occurred_at.desc()).all()
+    return [activity_to_dict(a) for a in activities]
+
+
+@api.post("/leads/{lead_id}/activities", status_code=201)
+def create_activity(lead_id: str, req: ActivityCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if req.activity_type not in VALID_ACTIVITY_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid activity type: {req.activity_type}")
+
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    activity = Activity(
+        lead_id=lead.id,
+        user_id=current_user.id,
+        activity_type=req.activity_type,
+        body=req.body,
+        occurred_at=req.occurred_at or datetime.utcnow(),
+    )
+    db.add(activity)
+    db.commit()
+    db.refresh(activity)
+    return activity_to_dict(activity)
+
+
+# ─── Dashboard Metrics ───────────────────────────────────────────────────────
+
+@api.get("/dashboard")
+def dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    base = db.query(Lead).filter(Lead.owner_user_id == current_user.id)
+
+    leads_contacted_week = base.filter(
+        Lead.last_contacted_at >= week_ago,
+        Lead.status.in_(["CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON"]),
+    ).count()
+
+    replies_week = db.query(Activity).filter(
+        Activity.user_id == current_user.id,
+        Activity.activity_type == "REPLY_RECEIVED",
+        Activity.occurred_at >= week_ago,
+    ).count()
+
+    calls_booked_week = db.query(Activity).filter(
+        Activity.user_id == current_user.id,
+        Activity.activity_type == "CALL_BOOKED",
+        Activity.occurred_at >= week_ago,
+    ).count()
+
+    wins_month = base.filter(
+        Lead.status.in_(["WON", "CLIENT"]),
+        Lead.updated_at >= month_start,
+    ).count()
+
+    follow_ups_due = base.filter(
+        Lead.next_follow_up_at >= today_start,
+        Lead.next_follow_up_at < now,
+    ).all()
+
+    overdue = base.filter(
+        Lead.next_follow_up_at < today_start,
+    ).all()
+
+    return {
+        "leads_contacted_week": leads_contacted_week,
+        "replies_week": replies_week,
+        "calls_booked_week": calls_booked_week,
+        "wins_month": wins_month,
+        "follow_ups_due_today": [lead_to_dict(l) for l in follow_ups_due],
+        "overdue_follow_ups": [lead_to_dict(l) for l in overdue],
+    }
+
+
+# ─── CSV Import ──────────────────────────────────────────────────────────────
+
+CSV_FIELD_MAP = {
+    "first_name": "first_name",
+    "last_name": "last_name",
+    "full_name": "full_name",
+    "business_name": "business_name",
+    "company": "business_name",
+    "segment": "segment",
+    "niche": "niche",
+    "website_url": "website_url",
+    "website": "website_url",
+    "email": "email",
+    "contact_path": "contact_path",
+    "linkedin_url": "linkedin_url",
+    "linkedin": "linkedin_url",
+    "location_text": "location_text",
+    "location": "location_text",
+    "team_size_estimate": "team_size_estimate",
+    "team_size": "team_size_estimate",
+    "source_url": "source_url",
+    "personalization_note": "personalization_note",
+    "outreach_angle": "outreach_angle",
+}
+
+
+@api.post("/import/csv")
+async def import_csv(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files accepted")
+
+    content = await file.read()
+    text = content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no headers")
+
+    # Map CSV headers to lead fields
+    header_map = {}
+    for header in reader.fieldnames:
+        clean = header.strip().lower().replace(" ", "_")
+        if clean in CSV_FIELD_MAP:
+            header_map[header] = CSV_FIELD_MAP[clean]
+
+    accepted = 0
+    rejected = 0
+    errors = []
+
+    for i, row in enumerate(reader, start=2):
+        try:
+            lead_data = {}
+            for csv_col, model_field in header_map.items():
+                val = row.get(csv_col, "").strip()
+                if val:
+                    if model_field == "team_size_estimate":
+                        lead_data[model_field] = int(val)
+                    else:
+                        lead_data[model_field] = val
+
+            if not lead_data.get("full_name") and (lead_data.get("first_name") or lead_data.get("last_name")):
+                lead_data["full_name"] = f"{lead_data.get('first_name', '')} {lead_data.get('last_name', '')}".strip()
+
+            lead = Lead(owner_user_id=current_user.id, **lead_data)
+            recalculate_scores(lead)
+            db.add(lead)
+            accepted += 1
+        except Exception as e:
+            rejected += 1
+            errors.append({"row": i, "error": str(e)})
+
+    db.commit()
+    return {"accepted": accepted, "rejected": rejected, "errors": errors[:20]}
+
+
+# ─── CSV Export ──────────────────────────────────────────────────────────────
+
+@api.get("/export/csv")
+def export_csv(
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    segment: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Lead).filter(Lead.owner_user_id == current_user.id)
+
+    if search:
+        search_lower = f"%{search.lower()}%"
+        q = q.filter(
+            (func.lower(Lead.full_name).like(search_lower))
+            | (func.lower(Lead.business_name).like(search_lower))
+            | (func.lower(Lead.email).like(search_lower))
+        )
+    if status:
+        q = q.filter(Lead.status == status)
+    if priority:
+        q = q.filter(Lead.priority_tier == priority)
+    if segment:
+        q = q.filter(Lead.segment == segment)
+
+    leads = q.order_by(Lead.total_score.desc()).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "full_name", "business_name", "email", "segment", "niche",
+        "status", "total_score", "priority_tier",
+        "offer_clarity_score", "bottleneck_evidence_score", "buying_signal_score",
+        "decision_maker_access_score", "contactability_score", "strategic_fit_score",
+        "website_url", "linkedin_url", "contact_path", "location_text",
+        "team_size_estimate", "source_url", "personalization_note", "outreach_angle",
+        "outcome_note", "last_contacted_at", "next_follow_up_at", "follow_up_count",
+        "created_at",
+    ])
+    for l in leads:
+        writer.writerow([
+            l.full_name, l.business_name, l.email, l.segment, l.niche,
+            l.status, l.total_score, l.priority_tier,
+            l.offer_clarity_score, l.bottleneck_evidence_score, l.buying_signal_score,
+            l.decision_maker_access_score, l.contactability_score, l.strategic_fit_score,
+            l.website_url, l.linkedin_url, l.contact_path, l.location_text,
+            l.team_size_estimate, l.source_url, l.personalization_note, l.outreach_angle,
+            l.outcome_note,
+            l.last_contacted_at.isoformat() if l.last_contacted_at else "",
+            l.next_follow_up_at.isoformat() if l.next_follow_up_at else "",
+            l.follow_up_count,
+            l.created_at.isoformat() if l.created_at else "",
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=leads_export.csv"},
+    )
+
+
+# ─── Pipeline (grouped leads by status) ──────────────────────────────────────
+
+PIPELINE_ORDER = ["NEW", "SCORED", "READY_TO_CONTACT", "CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON", "CLIENT", "LOST", "NURTURE"]
+
+
+@api.get("/pipeline")
+def get_pipeline(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    leads = db.query(Lead).filter(Lead.owner_user_id == current_user.id).all()
+    grouped = {s: [] for s in PIPELINE_ORDER}
+    for l in leads:
+        status = l.status or "NEW"
+        if status in grouped:
+            grouped[status].append(lead_to_dict(l))
+    return grouped
+
+
+# ─── Public Lead Intake ────────────────────────────────────────────────────
+
+class PublicLeadCreate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    full_name: Optional[str] = None
+    business_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    segment: Optional[str] = None
+    niche: Optional[str] = None
+    website_url: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    location_text: Optional[str] = None
+    source_url: Optional[str] = None
+    personalization_note: Optional[str] = None
+    outreach_angle: Optional[str] = None
+
+
+@api.post("/public/leads", status_code=201)
+def public_create_lead(
+    req: PublicLeadCreate,
+    api_key: str = Query(..., description="API key for public access"),
+    db: Session = Depends(get_db),
+):
+    """
+    Public endpoint for lead intake (no JWT required).
+    Requires an API key passed as ?api_key=xxx query parameter.
+    Auto-assigns lead to the configured CRM owner.
+    """
+    # Validate API key
+    expected_key = os.environ.get("CRM_PUBLIC_API_KEY", "")
+    if not expected_key or api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    # Find the owner — use CRM_OWNER_EMAIL env var or fall back to first user
+    owner_email = os.environ.get("CRM_OWNER_EMAIL", "")
+    if owner_email:
+        owner = db.query(User).filter(User.email == owner_email).first()
+    else:
+        owner = db.query(User).first()
+
+    if not owner:
+        raise HTTPException(status_code=500, detail="No CRM owner configured")
+
+    # Build lead from allowed fields only
+    lead_data = {k: v for k, v in req.model_dump().items() if v is not None}
+    lead = Lead(owner_user_id=owner.id, **lead_data)
+
+    # Auto-generate full_name
+    if not lead.full_name and (lead.first_name or lead.last_name):
+        lead.full_name = f"{lead.first_name or ''} {lead.last_name or ''}".strip()
+
+    # Auto-tag source
+    if not lead.source_url:
+        lead.source_url = "public_intake_form"
+
+    recalculate_scores(lead)
+    db.add(lead)
+    db.flush()  # Flush to get the lead.id before creating activity
+
+    # Log activity
+    db.add(Activity(
+        lead_id=lead.id,
+        user_id=owner.id,
+        activity_type="NOTE",
+        body="Lead created via public intake form",
+    ))
+
+    db.commit()
+    db.refresh(lead)
+    return lead_to_dict(lead)

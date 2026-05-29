@@ -1,0 +1,10 @@
+.venv/
+node_modules/
+dist/
+__pycache__/
+.git/
+.workshop/
+.env
+*.pyc
+.DS_Store
+tasks.json
