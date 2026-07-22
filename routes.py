@@ -112,6 +112,10 @@ class ActivityCreate(BaseModel):
     occurred_at: Optional[datetime] = None
 
 
+class ActivityUpdate(BaseModel):
+    body: str
+
+
 class BulkStatusChange(BaseModel):
     lead_ids: list[str]
     status: str
@@ -578,6 +582,37 @@ def create_activity(lead_id: str, req: ActivityCreate, current_user: User = Depe
     db.commit()
     db.refresh(activity)
     return activity_to_dict(activity)
+
+
+@api.put("/leads/{lead_id}/activities/{activity_id}")
+def update_activity(lead_id: str, activity_id: str, req: ActivityUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    activity = db.query(Activity).filter(Activity.id == activity_id, Activity.lead_id == lead_id).first()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Note not found")
+    if activity.activity_type != "NOTE":
+        raise HTTPException(status_code=400, detail="Only NOTE activities can be edited")
+    activity.body = req.body
+    db.commit()
+    db.refresh(activity)
+    return activity_to_dict(activity)
+
+
+@api.delete("/leads/{lead_id}/activities/{activity_id}")
+def delete_activity(lead_id: str, activity_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    activity = db.query(Activity).filter(Activity.id == activity_id, Activity.lead_id == lead_id).first()
+    if not activity:
+        raise HTTPException(status_code=404, detail="Note not found")
+    if activity.activity_type != "NOTE":
+        raise HTTPException(status_code=400, detail="Only NOTE activities can be deleted")
+    db.delete(activity)
+    db.commit()
+    return {"status": "deleted"}
 
 
 # ─── Dashboard Metrics ───────────────────────────────────────────────────────

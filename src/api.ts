@@ -166,6 +166,17 @@ export async function createActivity(leadId: string, data: { activity_type: stri
   return request(`/leads/${leadId}/activities`, { method: "POST", body: JSON.stringify(data) });
 }
 
+export async function updateActivity(leadId: string, activityId: string, body: string): Promise<Activity> {
+  return request(`/leads/${leadId}/activities/${activityId}`, {
+    method: "PUT",
+    body: JSON.stringify({ body }),
+  });
+}
+
+export async function deleteActivity(leadId: string, activityId: string): Promise<void> {
+  await request(`/leads/${leadId}/activities/${activityId}`, { method: "DELETE" });
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────────────
 
 export async function getDashboard(): Promise<DashboardData> {

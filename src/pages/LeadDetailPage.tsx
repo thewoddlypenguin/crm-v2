@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { CONTACT_PATHS, STATUS_LABELS } from "../types";
-import type { ContactPath, Lead, SegmentOption } from "../types";
+import type { Activity, ContactPath, Lead, SegmentOption } from "../types";
 import * as api from "../api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 
 export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -28,6 +29,11 @@ export default function LeadDetailPage() {
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const [notes, setNotes] = useState<Activity[]>([]);
+  const [noteText, setNoteText] = useState("");
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editNoteText, setEditNoteText] = useState("");
 
   const [form, setForm] = useState({
     first_name: "",
@@ -77,15 +83,17 @@ export default function LeadDetailPage() {
       }
 
       try {
-        const [leadData, segmentOptions] = await Promise.all([
+        const [leadData, segmentOptions, activityData] = await Promise.all([
           api.getLead(id),
           api.listSegments(),
+          api.listActivities(id),
         ]);
 
         if (cancelled) return;
 
         setLead(leadData);
         setSegments(segmentOptions);
+        setNotes(activityData.filter((a) => a.activity_type === "NOTE"));
         fillForm(leadData);
       } catch (err) {
         if (!cancelled) {
@@ -117,6 +125,45 @@ export default function LeadDetailPage() {
     setError("");
     setEditing(false);
     setShowAdvanced(false);
+  };
+
+  const refreshNotes = async () => {
+    if (!id) return;
+    const activityData = await api.listActivities(id);
+    setNotes(activityData.filter((a) => a.activity_type === "NOTE"));
+  };
+
+  const handleAddNote = async () => {
+    if (!id || !noteText.trim()) return;
+    try {
+      await api.createActivity(id, { activity_type: "NOTE", body: noteText.trim() });
+      setNoteText("");
+      await refreshNotes();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveNote = async (noteId: string) => {
+    if (!id || !editNoteText.trim()) return;
+    try {
+      await api.updateActivity(id, noteId, editNoteText.trim());
+      setEditingNoteId(null);
+      setEditNoteText("");
+      await refreshNotes();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteNote = async (noteId: string) => {
+    if (!id || !confirm("Delete this note?")) return;
+    try {
+      await api.deleteActivity(id, noteId);
+      await refreshNotes();
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -358,6 +405,87 @@ export default function LeadDetailPage() {
             </Card>
           </div>
         </div>
+
+        {/* ── Internal Notes ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Internal Notes</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Textarea
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                placeholder="Add an internal note..."
+                className="min-h-[80px]"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAddNote();
+                }}
+              />
+              <Button size="sm" onClick={handleAddNote} disabled={!noteText.trim()}>
+                Add Note
+              </Button>
+            </div>
+
+            {notes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No notes yet.</p>
+            ) : (
+              <div className="space-y-3 border-t border-border pt-4">
+                {notes.map((note) => (
+                  <div key={note.id} className="rounded-lg border border-border bg-background p-3 space-y-2">
+                    {editingNoteId === note.id ? (
+                      <div className="space-y-2">
+                        <Textarea
+                          value={editNoteText}
+                          onChange={(e) => setEditNoteText(e.target.value)}
+                          className="min-h-[80px]"
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => handleSaveNote(note.id)} disabled={!editNoteText.trim()}>
+                            Save
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => { setEditingNoteId(null); setEditNoteText(""); }}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-sm whitespace-pre-wrap text-foreground">{note.body}</p>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground">
+                            {note.occurred_at
+                              ? formatDistanceToNow(new Date(note.occurred_at), { addSuffix: true })
+                              : ""}
+                          </span>
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => { setEditingNoteId(note.id); setEditNoteText(note.body || ""); }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteNote(note.id)}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     );
   }
