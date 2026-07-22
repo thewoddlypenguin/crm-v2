@@ -1,6 +1,7 @@
 import type {
   AuthResponse,
   DashboardData,
+  EmailSendRequest,
   ImportResult,
   Lead,
   LeadsResponse,
@@ -175,6 +176,16 @@ export async function updateActivity(leadId: string, activityId: string, body: s
 
 export async function deleteActivity(leadId: string, activityId: string): Promise<void> {
   await request(`/leads/${leadId}/activities/${activityId}`, { method: "DELETE" });
+}
+
+// ─── Email ────────────────────────────────────────────────────────────────
+
+/** Send an email to a lead. Returns the logged OUTREACH_SENT activity on success. */
+export async function sendLeadEmail(leadId: string, data: EmailSendRequest): Promise<Activity> {
+  return request(`/leads/${leadId}/email`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────

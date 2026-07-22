@@ -114,6 +114,12 @@ export interface DashboardData {
   overdue_follow_ups: Lead[];
 }
 
+export interface EmailSendRequest {
+  subject: string;
+  body: string;
+  to_address?: string; // falls back to lead.email on the backend
+}
+
 export interface ImportResult {
   accepted: number;
   rejected: number;

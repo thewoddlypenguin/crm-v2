@@ -35,6 +35,13 @@ export default function LeadDetailPage() {
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editNoteText, setEditNoteText] = useState("");
 
+  // Email compose state
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailSuccess, setEmailSuccess] = useState(false);
+
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -163,6 +170,23 @@ export default function LeadDetailPage() {
       await refreshNotes();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (!id || !emailSubject.trim() || !emailBody.trim()) return;
+    setEmailSending(true);
+    setEmailError(null);
+    setEmailSuccess(false);
+    try {
+      await api.sendLeadEmail(id, { subject: emailSubject.trim(), body: emailBody.trim() });
+      setEmailSubject("");
+      setEmailBody("");
+      setEmailSuccess(true);
+    } catch (err: unknown) {
+      setEmailError(err instanceof Error ? err.message : "Failed to send email");
+    } finally {
+      setEmailSending(false);
     }
   };
 
@@ -484,6 +508,51 @@ export default function LeadDetailPage() {
                 ))}
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* ── Compose Email ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Send Email</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {emailSuccess && (
+              <div className="rounded-md bg-green-500/10 p-3 text-sm text-green-600">
+                Email sent successfully.
+              </div>
+            )}
+            {emailError && (
+              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                {emailError}
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="email-subject">Subject</Label>
+              <Input
+                id="email-subject"
+                value={emailSubject}
+                onChange={(e) => { setEmailSubject(e.target.value); setEmailSuccess(false); }}
+                placeholder="Email subject..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email-body">Body</Label>
+              <Textarea
+                id="email-body"
+                value={emailBody}
+                onChange={(e) => { setEmailBody(e.target.value); setEmailSuccess(false); }}
+                placeholder="Write your email..."
+                className="min-h-[120px]"
+              />
+            </div>
+            <Button
+              size="sm"
+              onClick={handleSendEmail}
+              disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
+            >
+              {emailSending ? "Sending..." : "Send Email"}
+            </Button>
           </CardContent>
         </Card>
       </div>

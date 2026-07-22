@@ -21,6 +21,7 @@ from auth import (
 )
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
+from email_service import EmailPayload, send_email
 from models import Activity, Lead, User
 
 api = APIRouter()
@@ -104,6 +105,12 @@ class LeadUpdate(BaseModel):
 
 class StatusChangeRequest(BaseModel):
     status: str
+
+
+class EmailSendRequest(BaseModel):
+    subject: str
+    body: str
+    to_address: Optional[str] = None  # falls back to lead.email
 
 
 class ActivityCreate(BaseModel):
@@ -613,6 +620,57 @@ def delete_activity(lead_id: str, activity_id: str, current_user: User = Depends
     db.delete(activity)
     db.commit()
     return {"status": "deleted"}
+
+
+# ─── Email ───────────────────────────────────────────────────────────────────
+
+@api.post("/leads/{lead_id}/email", status_code=201)
+def send_lead_email(
+    lead_id: str,
+    req: EmailSendRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Compose and send an email to a lead, then log it as an OUTREACH_SENT activity.
+
+    STUB: send_email() raises NotImplementedError until a provider is configured.
+    The activity log is only written on successful send.
+    """
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    recipient = req.to_address or lead.email
+    if not recipient:
+        raise HTTPException(status_code=400, detail="No recipient address — set to_address or add an email to the lead")
+
+    try:
+        result = send_email(EmailPayload(
+            to_address=recipient,
+            subject=req.subject,
+            body=req.body,
+        ))
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Email provider error: {exc}")
+
+    if not result.success:
+        raise HTTPException(status_code=502, detail=result.error or "Email send failed")
+
+    # Log the send as an activity
+    activity = Activity(
+        lead_id=lead.id,
+        user_id=current_user.id,
+        activity_type="OUTREACH_SENT",
+        body=f"Subject: {req.subject}\n\n{req.body}",
+        occurred_at=datetime.utcnow(),
+    )
+    db.add(activity)
+    db.commit()
+    db.refresh(activity)
+    return activity_to_dict(activity)
 
 
 # ─── Dashboard Metrics ───────────────────────────────────────────────────────
