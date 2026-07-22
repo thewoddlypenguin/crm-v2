@@ -5,9 +5,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci || npm install
 
-COPY index.html postcss.config.js tailwind.config.js tsconfig*.json vite.config.ts ./
-COPY src/ src/
-
+COPY . .
 RUN npm run build
 
 # ─── Stage 2: Python backend + built frontend ─────────────────────────────
@@ -16,11 +14,11 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install Python dependencies
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock* ./
 RUN pip install uv && uv sync --no-dev
 
-# Copy backend code
-COPY app.py db.py models.py auth.py business.py routes.py seed.py ./
+# Copy full backend source
+COPY . .
 
 # Copy built frontend from stage 1
 COPY --from=frontend-build /app/dist ./dist
