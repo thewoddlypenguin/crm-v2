@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from db import SessionLocal, init_db
-from models import User, Lead, Activity
+from models import User, Lead, Activity, Segment
 from auth import hash_password
 from business import recalculate_scores, apply_status_transition
 
@@ -48,6 +48,7 @@ def seed():
             # Delete existing data
             db.query(Activity).filter(Activity.user_id == user.id).delete()
             db.query(Lead).filter(Lead.owner_user_id == user.id).delete()
+            db.query(Segment).filter(Segment.owner_user_id == user.id).delete()
             db.query(User).filter(User.id == user.id).delete()
             db.flush()
 
@@ -60,6 +61,27 @@ def seed():
         )
         db.add(user)
         db.flush()
+
+        # Create default segments for the demo user and build a key→id lookup
+        segment_defs = [
+            ("coach", "Coach"),
+            ("consultant", "Consultant"),
+            ("solopreneur", "Solopreneur"),
+            ("other", "Other"),
+        ]
+        segment_map = {}  # key (uppercase) → segment.id
+        for order, (key, label) in enumerate(segment_defs):
+            seg = Segment(
+                id=str(uuid.uuid4()),
+                owner_user_id=user.id,
+                key=key,
+                label=label,
+                sort_order=order,
+                is_active=True,
+            )
+            db.add(seg)
+            db.flush()
+            segment_map[key.upper()] = seg.id
 
         now = datetime.utcnow()
 
@@ -99,6 +121,7 @@ def seed():
             if i == 12:
                 next_fu = now - timedelta(hours=6)  # overdue today
 
+            seg_key = SEGMENTS[i % 4]  # e.g. "COACH"
             lead = Lead(
                 id=str(uuid.uuid4()),
                 owner_user_id=user.id,
@@ -106,7 +129,8 @@ def seed():
                 last_name=last,
                 full_name=full,
                 business_name=business,
-                segment=SEGMENTS[i % 4],
+                segment=seg_key,
+                segment_id=segment_map[seg_key],
                 niche=NICHES[i % len(NICHES)],
                 email=f"{first.lower()}.{last.lower()}@example.com",
                 contact_path=CONTACT_PATHS[i % 4],
