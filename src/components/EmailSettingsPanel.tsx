@@ -36,7 +36,7 @@ export default function EmailSettingsPanel() {
   const [cfgError, setCfgError] = useState<string | null>(null);
   const [cfgSuccess, setCfgSuccess] = useState(false);
   const [cfgForm, setCfgForm] = useState({
-    provider: "",
+    provider: "none",
     from_email: "",
     from_name: "",
     reply_to_email: "",
@@ -63,7 +63,7 @@ export default function EmailSettingsPanel() {
       const s = await api.getEmailSettings();
       setCfg(s);
       setCfgForm({
-        provider: s.provider ?? "",
+        provider: s.provider ?? "none",
         from_email: s.from_email ?? "",
         from_name: s.from_name ?? "",
         reply_to_email: s.reply_to_email ?? "",
@@ -97,7 +97,7 @@ export default function EmailSettingsPanel() {
       setCfgError(null);
       setCfgSuccess(false);
       const saved = await api.saveEmailSettings({
-        provider: cfgForm.provider || null,
+        provider: (cfgForm.provider && cfgForm.provider !== "none") ? cfgForm.provider : null,
         from_email: cfgForm.from_email || null,
         from_name: cfgForm.from_name || null,
         reply_to_email: cfgForm.reply_to_email || null,
@@ -190,7 +190,7 @@ export default function EmailSettingsPanel() {
                     <SelectValue placeholder="Select a provider..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
                     {EMAIL_PROVIDERS.map((p) => (
                       <SelectItem key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</SelectItem>
                     ))}
