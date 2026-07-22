@@ -21,7 +21,6 @@ from auth import (
 )
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
-from email_service import EmailPayload, send_email
 from models import Activity, Lead, User
 
 api = APIRouter()
@@ -644,6 +643,8 @@ def send_lead_email(
     recipient = req.to_address or lead.email
     if not recipient:
         raise HTTPException(status_code=400, detail="No recipient address — set to_address or add an email to the lead")
+
+    from email_service import EmailPayload, send_email  # deferred — keeps app bootable if module is missing
 
     try:
         result = send_email(EmailPayload(
