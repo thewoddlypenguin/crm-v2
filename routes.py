@@ -897,7 +897,7 @@ def export_csv(
     if priority:
         q = q.filter(Lead.priority_tier == priority)
     if segment:
-        q = q.filter(Lead.segment_id == segment_id)
+        q = q.filter(Lead.segment_id == segment)
 
     leads = q.order_by(Lead.total_score.desc()).all()
 
