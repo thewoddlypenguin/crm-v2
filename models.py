@@ -61,6 +61,7 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     segments = relationship("Segment", back_populates="owner")
     email_templates = relationship("EmailTemplate", back_populates="owner")
+    email_settings = relationship("EmailSettings", back_populates="owner", uselist=False)
 
     leads = relationship("Lead", back_populates="owner")
 
@@ -84,6 +85,28 @@ class Segment(Base):
     __table_args__ = (
         Index("ix_segments_owner_key_unique", "owner_user_id", "key", unique=True),
     )
+
+class EmailSettings(Base):
+    """Per-user email provider configuration. One row per user (upsert pattern)."""
+    __tablename__ = "email_settings"
+
+    id = uuid_pk()
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+
+    # Provider identity — no secrets stored here; credentials stay in env vars
+    provider = Column(String, nullable=True)          # "smtp" | "resend" | "sendgrid" | "postmark"
+    from_email = Column(String, nullable=True)
+    from_name = Column(String, nullable=True)
+    reply_to_email = Column(String, nullable=True)
+
+    # Gate: must be explicitly disabled before any live send is attempted
+    test_mode_enabled = Column(Boolean, default=True, nullable=False)
+
+    created_at = now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", back_populates="email_settings")
+
 
 class EmailTemplate(Base):
     __tablename__ = "email_templates"

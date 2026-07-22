@@ -1,13 +1,21 @@
 /**
- * EmailSettingsPanel — Email template management + provider config placeholder.
+ * EmailSettingsPanel — Email provider config + template management.
  */
 import { useEffect, useState } from "react";
 import * as api from "../api";
-import type { EmailTemplate } from "../types";
+import type { EmailSettings, EmailTemplate } from "../types";
+import { EMAIL_PROVIDERS } from "../types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Card,
   CardContent,
@@ -21,19 +29,52 @@ export default function EmailSettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Create form
+  // Provider config state
+  const [cfg, setCfg] = useState<EmailSettings | null>(null);
+  const [cfgLoading, setCfgLoading] = useState(true);
+  const [cfgSaving, setCfgSaving] = useState(false);
+  const [cfgError, setCfgError] = useState<string | null>(null);
+  const [cfgSuccess, setCfgSuccess] = useState(false);
+  const [cfgForm, setCfgForm] = useState({
+    provider: "",
+    from_email: "",
+    from_name: "",
+    reply_to_email: "",
+    test_mode_enabled: true,
+  });
+
+  // Template create form
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // Edit state
+  // Template edit state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editSubject, setEditSubject] = useState("");
   const [editBody, setEditBody] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+
+  async function loadCfg() {
+    try {
+      setCfgLoading(true);
+      const s = await api.getEmailSettings();
+      setCfg(s);
+      setCfgForm({
+        provider: s.provider ?? "",
+        from_email: s.from_email ?? "",
+        from_name: s.from_name ?? "",
+        reply_to_email: s.reply_to_email ?? "",
+        test_mode_enabled: s.test_mode_enabled,
+      });
+    } catch {
+      // non-fatal — leave defaults
+    } finally {
+      setCfgLoading(false);
+    }
+  }
 
   async function load() {
     try {
@@ -47,7 +88,29 @@ export default function EmailSettingsPanel() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { loadCfg(); load(); }, []);
+
+  async function handleSaveCfg(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      setCfgSaving(true);
+      setCfgError(null);
+      setCfgSuccess(false);
+      const saved = await api.saveEmailSettings({
+        provider: cfgForm.provider || null,
+        from_email: cfgForm.from_email || null,
+        from_name: cfgForm.from_name || null,
+        reply_to_email: cfgForm.reply_to_email || null,
+        test_mode_enabled: cfgForm.test_mode_enabled,
+      });
+      setCfg(saved);
+      setCfgSuccess(true);
+    } catch (err: unknown) {
+      setCfgError(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setCfgSaving(false);
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -97,23 +160,99 @@ export default function EmailSettingsPanel() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      {/* Provider config placeholder */}
+      {/* Provider config form */}
       <Card>
         <CardHeader>
           <CardTitle>Email Provider</CardTitle>
           <CardDescription>
-            Configure the outbound email provider for sending messages to leads.
+            Configure the outbound email provider and sender identity. Credentials (API keys, passwords) are set as server environment variables — not stored here.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="rounded-md border border-dashed border-border bg-muted/40 px-4 py-5 text-center text-sm text-muted-foreground space-y-1">
-            <p className="font-medium">No provider configured.</p>
-            <p>
-              Add credentials in{" "}
-              <code className="text-xs bg-muted px-1 py-0.5 rounded">email_service.py</code>{" "}
-              to enable live sending.
-            </p>
-          </div>
+          {cfgLoading ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : (
+            <form onSubmit={handleSaveCfg} className="space-y-4">
+              {cfgSuccess && (
+                <div className="rounded-md bg-green-500/10 p-3 text-sm text-green-600">Settings saved.</div>
+              )}
+              {cfgError && (
+                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{cfgError}</div>
+              )}
+
+              <div className="space-y-2">
+                <Label>Provider</Label>
+                <Select
+                  value={cfgForm.provider}
+                  onValueChange={(v) => setCfgForm((f) => ({ ...f, provider: v, }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a provider..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">None</SelectItem>
+                    {EMAIL_PROVIDERS.map((p) => (
+                      <SelectItem key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="cfg-from-email">From Email</Label>
+                  <Input
+                    id="cfg-from-email"
+                    type="email"
+                    value={cfgForm.from_email}
+                    onChange={(e) => setCfgForm((f) => ({ ...f, from_email: e.target.value }))}
+                    placeholder="you@yourdomain.com"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cfg-from-name">From Name</Label>
+                  <Input
+                    id="cfg-from-name"
+                    value={cfgForm.from_name}
+                    onChange={(e) => setCfgForm((f) => ({ ...f, from_name: e.target.value }))}
+                    placeholder="Your Name"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="cfg-reply-to">Reply-To Email</Label>
+                <Input
+                  id="cfg-reply-to"
+                  type="email"
+                  value={cfgForm.reply_to_email}
+                  onChange={(e) => setCfgForm((f) => ({ ...f, reply_to_email: e.target.value }))}
+                  placeholder="replies@yourdomain.com (optional)"
+                />
+              </div>
+
+              {/* Test mode toggle */}
+              <div className="flex items-start gap-3 rounded-lg border border-border p-3 bg-muted/30">
+                <input
+                  type="checkbox"
+                  id="cfg-test-mode"
+                  checked={cfgForm.test_mode_enabled}
+                  onChange={(e) => setCfgForm((f) => ({ ...f, test_mode_enabled: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 rounded border-border"
+                />
+                <div>
+                  <Label htmlFor="cfg-test-mode" className="cursor-pointer font-medium">Test mode enabled</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    When on, emails are simulated and never delivered. Disable only when your provider credentials are ready.
+                  </p>
+                </div>
+              </div>
+
+              <Button type="submit" disabled={cfgSaving}>
+                {cfgSaving ? "Saving..." : "Save settings"}
+              </Button>
+            </form>
+          )}
         </CardContent>
       </Card>
 

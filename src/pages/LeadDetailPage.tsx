@@ -43,7 +43,7 @@ export default function LeadDetailPage() {
   const [emailBody, setEmailBody] = useState("");
   const [emailSending, setEmailSending] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailSuccess, setEmailSuccess] = useState(false);
+  const [emailSuccess, setEmailSuccess] = useState<string | null>(null); // message string or null
 
   // Email templates
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
@@ -187,12 +187,12 @@ export default function LeadDetailPage() {
     if (!id || !emailSubject.trim() || !emailBody.trim()) return;
     setEmailSending(true);
     setEmailError(null);
-    setEmailSuccess(false);
+    setEmailSuccess(null);
     try {
-      await api.sendLeadEmail(id, { subject: emailSubject.trim(), body: emailBody.trim() });
+      const result = await api.sendLeadEmail(id, { subject: emailSubject.trim(), body: emailBody.trim() });
       setEmailSubject("");
       setEmailBody("");
-      setEmailSuccess(true);
+      setEmailSuccess(result.simulated ? "Simulated (test mode) — not delivered." : "Email sent successfully.");
       await refreshActivities();
     } catch (err: unknown) {
       setEmailError(err instanceof Error ? err.message : "Failed to send email");
@@ -566,8 +566,8 @@ export default function LeadDetailPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {emailSuccess && (
-              <div className="rounded-md bg-green-500/10 p-3 text-sm text-green-600">
-                Email sent successfully.
+              <div className={`rounded-md p-3 text-sm ${emailSuccess.includes("test mode") ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-green-500/10 text-green-600"}`}>
+                {emailSuccess}
               </div>
             )}
             {emailError && (
@@ -585,7 +585,7 @@ export default function LeadDetailPage() {
                     if (tpl) {
                       setEmailSubject(tpl.subject);
                       setEmailBody(tpl.body);
-                      setEmailSuccess(false);
+                      setEmailSuccess(null);
                     }
                   }}
                 >
@@ -605,7 +605,7 @@ export default function LeadDetailPage() {
               <Input
                 id="email-subject"
                 value={emailSubject}
-                onChange={(e) => { setEmailSubject(e.target.value); setEmailSuccess(false); }}
+                onChange={(e) => { setEmailSubject(e.target.value); setEmailSuccess(null); }}
                 placeholder="Email subject..."
               />
             </div>
@@ -614,7 +614,7 @@ export default function LeadDetailPage() {
               <Textarea
                 id="email-body"
                 value={emailBody}
-                onChange={(e) => { setEmailBody(e.target.value); setEmailSuccess(false); }}
+                onChange={(e) => { setEmailBody(e.target.value); setEmailSuccess(null); }}
                 placeholder="Write your email..."
                 className="min-h-[120px]"
               />

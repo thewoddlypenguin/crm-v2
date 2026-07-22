@@ -3,7 +3,7 @@
 import csv
 import io
 import os
-from models import Activity, EmailTemplate, Lead, User, Segment
+from models import Activity, EmailSettings, EmailTemplate, Lead, User, Segment
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -21,7 +21,7 @@ from auth import (
 )
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
-from models import Activity, EmailTemplate, Lead, User
+from models import Activity, EmailSettings, EmailTemplate, Lead, User
 
 api = APIRouter()
 
@@ -156,6 +156,14 @@ class EmailTemplateUpdate(BaseModel):
     body: Optional[str] = None
 
 
+class EmailSettingsUpdate(BaseModel):
+    provider: Optional[str] = None          # "smtp" | "resend" | "sendgrid" | "postmark" | None
+    from_email: Optional[str] = None
+    from_name: Optional[str] = None
+    reply_to_email: Optional[str] = None
+    test_mode_enabled: Optional[bool] = None
+
+
 def lead_to_dict(lead: Lead) -> dict:
     return {
         "id": lead.id,
@@ -226,6 +234,17 @@ def template_to_dict(t: EmailTemplate) -> dict:
         "body": t.body,
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+    }
+
+def email_settings_to_dict(s: EmailSettings) -> dict:
+    return {
+        "id": s.id,
+        "provider": s.provider,
+        "from_email": s.from_email,
+        "from_name": s.from_name,
+        "reply_to_email": s.reply_to_email,
+        "test_mode_enabled": s.test_mode_enabled,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
 
 
@@ -644,6 +663,40 @@ def delete_activity(lead_id: str, activity_id: str, current_user: User = Depends
     return {"status": "deleted"}
 
 
+# ─── Email Settings ──────────────────────────────────────────────────────────
+
+@api.get("/email-settings")
+def get_email_settings(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return the current user's email config. Returns defaults if not yet saved."""
+    s = db.query(EmailSettings).filter(EmailSettings.owner_user_id == current_user.id).first()
+    if not s:
+        return {"id": None, "provider": None, "from_email": None, "from_name": None,
+                "reply_to_email": None, "test_mode_enabled": True, "updated_at": None}
+    return email_settings_to_dict(s)
+
+
+@api.put("/email-settings")
+def upsert_email_settings(req: EmailSettingsUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Create or update the current user's email config (upsert)."""
+    s = db.query(EmailSettings).filter(EmailSettings.owner_user_id == current_user.id).first()
+    if not s:
+        s = EmailSettings(owner_user_id=current_user.id)
+        db.add(s)
+    if req.provider is not None:
+        s.provider = req.provider or None
+    if req.from_email is not None:
+        s.from_email = req.from_email or None
+    if req.from_name is not None:
+        s.from_name = req.from_name or None
+    if req.reply_to_email is not None:
+        s.reply_to_email = req.reply_to_email or None
+    if req.test_mode_enabled is not None:
+        s.test_mode_enabled = req.test_mode_enabled
+    db.commit()
+    db.refresh(s)
+    return email_settings_to_dict(s)
+
+
 # ─── Email Templates ─────────────────────────────────────────────────────────
 
 @api.get("/email-templates")
@@ -723,34 +776,50 @@ def send_lead_email(
     if not recipient:
         raise HTTPException(status_code=400, detail="No recipient address — set to_address or add an email to the lead")
 
-    from email_service import EmailPayload, send_email  # deferred — keeps app bootable if module is missing
+    # Load caller's email config
+    cfg = db.query(EmailSettings).filter(EmailSettings.owner_user_id == current_user.id).first()
+
+    from email_service import EmailConfig, EmailPayload, send_email  # deferred import
+
+    email_cfg = EmailConfig(
+        provider=cfg.provider if cfg else None,
+        from_email=cfg.from_email if cfg else None,
+        from_name=cfg.from_name if cfg else None,
+        reply_to_email=cfg.reply_to_email if cfg else None,
+        test_mode_enabled=cfg.test_mode_enabled if cfg else True,
+    )
 
     try:
         result = send_email(EmailPayload(
             to_address=recipient,
             subject=req.subject,
             body=req.body,
-        ))
-    except NotImplementedError as exc:
-        raise HTTPException(status_code=501, detail=str(exc))
+        ), config=email_cfg)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Email provider error: {exc}")
+        raise HTTPException(status_code=502, detail=f"Email error: {exc}")
 
     if not result.success:
         raise HTTPException(status_code=502, detail=result.error or "Email send failed")
 
-    # Log the send as an activity
+    # Log the send as an activity — prefix body when in test mode
+    activity_body = (
+        f"[TEST MODE — not delivered]\nSubject: {req.subject}\n\n{req.body}"
+        if result.simulated
+        else f"Subject: {req.subject}\n\n{req.body}"
+    )
     activity = Activity(
         lead_id=lead.id,
         user_id=current_user.id,
         activity_type="OUTREACH_SENT",
-        body=f"Subject: {req.subject}\n\n{req.body}",
+        body=activity_body,
         occurred_at=datetime.utcnow(),
     )
     db.add(activity)
     db.commit()
     db.refresh(activity)
-    return activity_to_dict(activity)
+    resp = activity_to_dict(activity)
+    resp["simulated"] = result.simulated  # surface to frontend
+    return resp
 
 
 # ─── Dashboard Metrics ───────────────────────────────────────────────────────

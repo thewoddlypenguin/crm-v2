@@ -2,6 +2,7 @@ import type {
   AuthResponse,
   DashboardData,
   EmailSendRequest,
+  EmailSettings,
   EmailTemplate,
   ImportResult,
   Lead,
@@ -181,12 +182,22 @@ export async function deleteActivity(leadId: string, activityId: string): Promis
 
 // ─── Email ────────────────────────────────────────────────────────────────
 
-/** Send an email to a lead. Returns the logged OUTREACH_SENT activity on success. */
-export async function sendLeadEmail(leadId: string, data: EmailSendRequest): Promise<Activity> {
+/** Send an email to a lead. Returns the logged OUTREACH_SENT activity (+ simulated flag) on success. */
+export async function sendLeadEmail(leadId: string, data: EmailSendRequest): Promise<Activity & { simulated?: boolean }> {
   return request(`/leads/${leadId}/email`, {
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+// ─── Email Settings ───────────────────────────────────────────────────────
+
+export async function getEmailSettings(): Promise<EmailSettings> {
+  return request("/email-settings");
+}
+
+export async function saveEmailSettings(data: Partial<Omit<EmailSettings, "id" | "updated_at">>): Promise<EmailSettings> {
+  return request("/email-settings", { method: "PUT", body: JSON.stringify(data) });
 }
 
 // ─── Email Templates ──────────────────────────────────────────────────────

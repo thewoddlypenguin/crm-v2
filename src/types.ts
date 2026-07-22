@@ -120,6 +120,19 @@ export interface EmailSendRequest {
   to_address?: string; // falls back to lead.email on the backend
 }
 
+export interface EmailSettings {
+  id: string | null;
+  provider: string | null;
+  from_email: string | null;
+  from_name: string | null;
+  reply_to_email: string | null;
+  test_mode_enabled: boolean;
+  updated_at: string | null;
+}
+
+export type EmailProvider = "smtp" | "resend" | "sendgrid" | "postmark";
+export const EMAIL_PROVIDERS: EmailProvider[] = ["smtp", "resend", "sendgrid", "postmark"];
+
 export interface EmailTemplate {
   id: string;
   owner_user_id: string;
