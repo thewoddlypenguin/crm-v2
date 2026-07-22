@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -50,6 +50,7 @@
     "react-dom": "19.2.0",
     "react-hook-form": "7.71.2",
     "react-resizable-panels": "2.1.7",
+    "react-router-dom": "^7.16.0",
     "recharts": "3.8.0",
     "sonner": "2.0.7",
     "tailwind-merge": "3.5.0",

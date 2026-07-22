@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
-import type { Lead, LeadStatus, PriorityTier, Segment } from "../types";
-import { STATUSES, SEGMENTS, STATUS_LABELS, SEGMENT_LABELS } from "../types";
+import type { Lead, LeadStatus, PriorityTier, SegmentOption } from "../types";
+import { STATUSES, STATUS_LABELS } from "../types";
 import * as api from "../api";
 import { PriorityBadge, StatusBadge, ScoreBadge } from "@/components/Badges";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,7 @@ import { formatDistanceToNow } from "date-fns";
 
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [segments, setSegments] = useState<SegmentOption[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -37,6 +38,15 @@ export default function LeadsPage() {
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkSegmentId, setBulkSegmentId] = useState<string>("");
+
+  const segmentLabelMap = useMemo(
+    () =>
+      Object.fromEntries(
+        segments.map((s) => [s.key.toUpperCase(), s.label])
+      ) as Record<string, string>,
+    [segments]
+  );
 
   const fetchLeads = useCallback(async () => {
     setLoading(true);
@@ -45,7 +55,7 @@ export default function LeadsPage() {
         search: search || undefined,
         status: statusFilter !== "all" ? (statusFilter as LeadStatus) : undefined,
         priority: priorityFilter !== "all" ? (priorityFilter as PriorityTier) : undefined,
-        segment: segmentFilter !== "all" ? (segmentFilter as Segment) : undefined,
+        segment_id: segmentFilter !== "all" ? segmentFilter : undefined,
         sort_by: sortBy,
         sort_dir: sortDir,
         page,
@@ -63,6 +73,13 @@ export default function LeadsPage() {
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
+
+  useEffect(() => {
+    api
+      .listSegments()
+      .then(setSegments)
+      .catch((err) => console.error("Failed to load segments", err));
+  }, []);
 
   const toggleSort = (col: string) => {
     if (sortBy === col) {
@@ -98,6 +115,17 @@ export default function LeadsPage() {
       console.error(err);
     }
   };
+  const handleBulkSegment = async () => {
+    if (selectedIds.size === 0 || !bulkSegmentId) return;
+    try {
+      await api.bulkSegmentChange(Array.from(selectedIds), bulkSegmentId);
+      setSelectedIds(new Set());
+      setBulkSegmentId("");
+      fetchLeads();
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this lead? This cannot be undone.")) return;
@@ -111,29 +139,47 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search name, business, email..."
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             className="pl-9"
           />
         </div>
-        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
+
+        <Select
+          value={statusFilter}
+          onValueChange={(v) => {
+            setStatusFilter(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-[160px]">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
             {STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>
+              <SelectItem key={s} value={s}>
+                {STATUS_LABELS[s]}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Select value={priorityFilter} onValueChange={(v) => { setPriorityFilter(v); setPage(1); }}>
+
+        <Select
+          value={priorityFilter}
+          onValueChange={(v) => {
+            setPriorityFilter(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-[130px]">
             <SelectValue placeholder="Priority" />
           </SelectTrigger>
@@ -144,17 +190,28 @@ export default function LeadsPage() {
             <SelectItem value="C">C (Low)</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={segmentFilter} onValueChange={(v) => { setSegmentFilter(v); setPage(1); }}>
+
+        <Select
+          value={segmentFilter}
+          onValueChange={(v) => {
+            setSegmentFilter(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-[160px]">
             <SelectValue placeholder="Segment" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Segments</SelectItem>
-            {SEGMENTS.map((s) => (
-              <SelectItem key={s} value={s}>{SEGMENT_LABELS[s]}</SelectItem>
+            {segments.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.label}
+              </SelectItem>
             ))}
+
           </SelectContent>
         </Select>
+
         <Link to="/leads/new">
           <Button className="gap-2">
             <Plus className="h-4 w-4" />
@@ -163,20 +220,46 @@ export default function LeadsPage() {
         </Link>
       </div>
 
-      {/* Bulk actions */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
-          <span className="text-sm text-muted-foreground">{selectedIds.size} selected</span>
-          <span className="text-muted-foreground">→</span>
-          {["CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON", "CLIENT", "LOST"].map((s) => (
-            <Button key={s} variant="outline" size="sm" onClick={() => handleBulkStatus(s as LeadStatus)}>
-              {STATUS_LABELS[s as LeadStatus]}
-            </Button>
-          ))}
-        </div>
-      )}
+  <div className="flex flex-col gap-3 p-3 bg-muted rounded-lg">
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-sm text-muted-foreground">{selectedIds.size} selected</span>
+      <span className="text-muted-foreground">→</span>
+      {["CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON", "CLIENT", "LOST"].map((s) => (
+        <Button key={s} variant="outline" size="sm" onClick={() => handleBulkStatus(s as LeadStatus)}>
+          {STATUS_LABELS[s as LeadStatus]}
+        </Button>
+      ))}
+    </div>
 
-      {/* Table */}
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-sm text-muted-foreground">Change segment:</span>
+      <Select value={bulkSegmentId} onValueChange={setBulkSegmentId}>
+        <SelectTrigger className="w-[220px]">
+          <SelectValue placeholder="Select segment" />
+        </SelectTrigger>
+        <SelectContent>
+          {segments.map((s) => (
+            <SelectItem key={s.id} value={s.id}>
+              {s.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Button
+        variant="default"
+        size="sm"
+        onClick={handleBulkSegment}
+        disabled={!bulkSegmentId}
+      >
+        Apply segment
+      </Button>
+    </div>
+  </div>
+)}
+
+
       <div className="border border-border rounded-lg overflow-hidden">
         <Table>
           <TableHeader>
@@ -225,7 +308,9 @@ export default function LeadsPage() {
                 <TableRow
                   key={lead.id}
                   className="cursor-pointer"
-                  onClick={() => window.location.href = `/leads/${lead.id}`}
+                  onClick={() => {
+                    window.location.href = `/leads/${lead.id}`;
+                  }}
                 >
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Checkbox
@@ -233,33 +318,54 @@ export default function LeadsPage() {
                       onCheckedChange={() => toggleSelect(lead.id)}
                     />
                   </TableCell>
+
                   <TableCell className="font-medium">
-                    <Link to={`/leads/${lead.id}`} className="hover:underline" onClick={(e) => e.stopPropagation()}>
+                    <Link
+                      to={`/leads/${lead.id}`}
+                      className="hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {lead.full_name || "—"}
                     </Link>
                   </TableCell>
+
                   <TableCell className="text-muted-foreground">{lead.business_name || "—"}</TableCell>
+
                   <TableCell>
-                    <span className="text-xs text-muted-foreground">{lead.segment ? SEGMENT_LABELS[lead.segment] : "—"}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {lead.segment_label || (lead.segment ? segmentLabelMap[lead.segment] || lead.segment : "—")}
+                    </span>
                   </TableCell>
+
+
                   <TableCell>
                     <StatusBadge status={lead.status} />
                   </TableCell>
+
                   <TableCell>
                     <ScoreBadge score={lead.total_score} />
                   </TableCell>
+
                   <TableCell>
                     <PriorityBadge tier={lead.priority_tier} />
                   </TableCell>
+
                   <TableCell>
                     {lead.next_follow_up_at ? (
-                      <span className={`text-xs ${new Date(lead.next_follow_up_at) < new Date() ? "text-red-500 font-medium" : "text-muted-foreground"}`}>
+                      <span
+                        className={`text-xs ${
+                          new Date(lead.next_follow_up_at) < new Date()
+                            ? "text-red-500 font-medium"
+                            : "text-muted-foreground"
+                        }`}
+                      >
                         {formatDistanceToNow(new Date(lead.next_follow_up_at), { addSuffix: true })}
                       </span>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </TableCell>
+
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -288,7 +394,6 @@ export default function LeadsPage() {
         </Table>
       </div>
 
-      {/* Pagination */}
       {total > 50 && (
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">

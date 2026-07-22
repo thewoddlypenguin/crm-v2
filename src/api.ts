@@ -8,7 +8,8 @@ import type {
   PipelineData,
   Activity,
   PriorityTier,
-  Segment,
+  SegmentValue,
+  SegmentOption,
 } from "./types";
 
 const BASE = "/api";
@@ -63,18 +64,54 @@ export async function getMe(): Promise<{ id: string; email: string; full_name: s
   return request("/auth/me");
 }
 
+// ─── Segments ────────────────────────────────────────────────────────────
+
+export async function listSegments(include_inactive = false): Promise<SegmentOption[]> {
+  const sp = new URLSearchParams();
+  if (include_inactive) sp.set("include_inactive", "true");
+  return request(`/segments?${sp.toString()}`);
+}
+
+export async function createSegment(data: {
+  key: string;
+  label: string;
+  sort_order?: number;
+  is_active?: boolean;
+}): Promise<SegmentOption> {
+  return request("/segments", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateSegment(
+  id: string,
+  data: {
+    key?: string;
+    label?: string;
+    sort_order?: number;
+    is_active?: boolean;
+  }
+): Promise<SegmentOption> {
+  return request(`/segments/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
 // ─── Leads ───────────────────────────────────────────────────────────────
 
 export async function listLeads(params?: {
   search?: string;
   status?: LeadStatus;
   priority?: PriorityTier;
-  segment?: Segment;
+  segment_id?: string;
   sort_by?: string;
   sort_dir?: string;
   page?: number;
   page_size?: number;
 }): Promise<LeadsResponse> {
+
   const sp = new URLSearchParams();
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
@@ -107,6 +144,17 @@ export async function changeStatus(id: string, status: LeadStatus): Promise<Lead
 export async function bulkStatusChange(ids: string[], status: LeadStatus): Promise<{ updated: number }> {
   return request("/leads/bulk-status", { method: "POST", body: JSON.stringify({ lead_ids: ids, status }) });
 }
+
+export async function bulkSegmentChange(
+  ids: string[],
+  segment_id: string
+): Promise<{ updated: number }> {
+  return request("/leads/bulk-segment", {
+    method: "POST",
+    body: JSON.stringify({ lead_ids: ids, segment_id }),
+  });
+}
+
 
 // ─── Activities ──────────────────────────────────────────────────────────
 
@@ -151,7 +199,7 @@ export function exportCSVUrl(params?: {
   search?: string;
   status?: LeadStatus;
   priority?: PriorityTier;
-  segment?: Segment;
+  segment?: SegmentValue;
 }): string {
   const sp = new URLSearchParams();
   if (params) {
@@ -159,16 +207,15 @@ export function exportCSVUrl(params?: {
       if (v !== undefined && v !== "") sp.set(k, String(v));
     });
   }
-  const token = getToken();
-  // Return direct URL for download - need to add token as query param or use fetch
-  return `${BASE}/export/csv?${sp.toString()}`;
+// Return direct URL for download - auth-sensitive downloads should use fetch/downloadCSV
+return `${BASE}/export/csv?${sp.toString()}`;
 }
 
 export async function downloadCSV(params?: {
   search?: string;
   status?: LeadStatus;
   priority?: PriorityTier;
-  segment?: Segment;
+  segment?: SegmentValue;
 }): Promise<Blob> {
   const sp = new URLSearchParams();
   if (params) {

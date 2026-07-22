@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, String, Text, Integer, DateTime, ForeignKey, Enum as SAEnum, Index
+    Column, String, Text, Integer, DateTime, ForeignKey, Enum as SAEnum, Index, Boolean
 )
 from sqlalchemy.orm import relationship
 
@@ -59,9 +59,30 @@ class User(Base):
     full_name = Column(String, nullable=True)
     created_at = now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    segments = relationship("Segment", back_populates="owner")
 
     leads = relationship("Lead", back_populates="owner")
 
+class Segment(Base):
+    __tablename__ = "segments"
+
+    id = uuid_pk()
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+
+    key = Column(String, nullable=False)
+    label = Column(String, nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    created_at = now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", back_populates="segments")
+    leads = relationship("Lead", back_populates="segment_rel")
+
+    __table_args__ = (
+        Index("ix_segments_owner_key_unique", "owner_user_id", "key", unique=True),
+    )
 
 class Lead(Base):
     __tablename__ = "leads"
@@ -74,6 +95,8 @@ class Lead(Base):
     full_name = Column(String, nullable=True, index=True)
     business_name = Column(String, nullable=True, index=True)
     segment = Column(SEGMENT_ENUM, nullable=True)
+    segment_id = Column(String, ForeignKey("segments.id"), nullable=True, index=True)
+    segment_rel = relationship("Segment", back_populates="leads")
     niche = Column(String, nullable=True)
     website_url = Column(String, nullable=True)
     email = Column(String, nullable=True)

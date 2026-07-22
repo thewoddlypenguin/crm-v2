@@ -12,6 +12,7 @@ import LeadCreatePage from "./pages/LeadCreatePage";
 import LeadDetailPage from "./pages/LeadDetailPage";
 import ImportPage from "./pages/ImportPage";
 import ExportPage from "./pages/ExportPage";
+import SettingsPage from "./pages/SettingsPage";
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -67,6 +68,7 @@ function App() {
         <Route path="/leads/:id" element={<LeadDetailPage />} />
         <Route path="/import" element={<ImportPage />} />
         <Route path="/export" element={<ExportPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Layout>

@@ -1,6 +1,6 @@
 // ─── Enums ────────────────────────────────────────────────────────────────
 
-export type Segment = "COACH" | "CONSULTANT" | "SOLOPRENEUR" | "OTHER";
+export type SegmentValue = string;
 export type ContactPath = "EMAIL" | "FORM" | "DM" | "OTHER";
 export type PriorityTier = "A" | "B" | "C";
 export type LeadStatus =
@@ -41,7 +41,9 @@ export interface Lead {
   last_name: string | null;
   full_name: string | null;
   business_name: string | null;
-  segment: Segment | null;
+  segment: SegmentValue | null;
+  segment_id?: string | null;
+  segment_label?: string | null;
   niche: string | null;
   website_url: string | null;
   email: string | null;
@@ -68,7 +70,6 @@ export interface Lead {
   created_at: string | null;
   updated_at: string | null;
 }
-
 export interface Activity {
   id: string;
   lead_id: string;
@@ -77,6 +78,17 @@ export interface Activity {
   body: string | null;
   occurred_at: string | null;
   created_at: string | null;
+}
+
+export interface SegmentOption {
+  id: string;
+  owner_user_id: string;
+  key: string;
+  label: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 // ─── API Responses ────────────────────────────────────────────────────────
@@ -118,7 +130,6 @@ export const STATUSES: LeadStatus[] = [
   "WON", "CLIENT", "LOST", "NURTURE",
 ];
 
-export const SEGMENTS: Segment[] = ["COACH", "CONSULTANT", "SOLOPRENEUR", "OTHER"];
 export const CONTACT_PATHS: ContactPath[] = ["EMAIL", "FORM", "DM", "OTHER"];
 export const PRIORITY_TIERS: PriorityTier[] = ["A", "B", "C"];
 
@@ -135,11 +146,4 @@ export const STATUS_LABELS: Record<LeadStatus, string> = {
   CLIENT: "Client",
   LOST: "Lost",
   NURTURE: "Nurture",
-};
-
-export const SEGMENT_LABELS: Record<Segment, string> = {
-  COACH: "Coach",
-  CONSULTANT: "Consultant",
-  SOLOPRENEUR: "Solopreneur",
-  OTHER: "Other",
 };

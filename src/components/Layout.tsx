@@ -12,6 +12,7 @@ import {
   Menu,
   X,
   Plus,
+  Settings,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { href: "/pipeline", label: "Pipeline", icon: GitBranch },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/export", label: "Export", icon: Download },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function Layout({ user, onLogout, children }: LayoutProps) {

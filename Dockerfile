@@ -1,15 +1,14 @@
 # ─── Stage 1: Build frontend ───────────────────────────────────────────────
 FROM node:22-slim AS frontend-build
-
-RUN npm install -g bun
-
 WORKDIR /app
-COPY package.json bun.lock bunfig.toml ./
-RUN bun install --frozen-lockfile
+
+COPY package*.json ./
+RUN npm ci || npm install
 
 COPY index.html postcss.config.js tailwind.config.js tsconfig*.json vite.config.ts ./
 COPY src/ src/
-RUN bunx --bun vite build
+
+RUN npm run build
 
 # ─── Stage 2: Python backend + built frontend ─────────────────────────────
 FROM python:3.12-slim
@@ -17,8 +16,8 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install Python dependencies
-COPY pyproject.toml uv.lock ./
-RUN pip install uv && uv sync --frozen --compile-bytecode --no-dev
+COPY pyproject.toml ./
+RUN pip install uv && uv sync --no-dev
 
 # Copy backend code
 COPY app.py db.py models.py auth.py business.py routes.py seed.py ./
