@@ -120,6 +120,16 @@ export interface EmailSendRequest {
   to_address?: string; // falls back to lead.email on the backend
 }
 
+export interface EmailTemplate {
+  id: string;
+  owner_user_id: string;
+  name: string;
+  subject: string;
+  body: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface ImportResult {
   accepted: number;
   rejected: number;

@@ -60,6 +60,7 @@ class User(Base):
     created_at = now()
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     segments = relationship("Segment", back_populates="owner")
+    email_templates = relationship("EmailTemplate", back_populates="owner")
 
     leads = relationship("Lead", back_populates="owner")
 
@@ -83,6 +84,20 @@ class Segment(Base):
     __table_args__ = (
         Index("ix_segments_owner_key_unique", "owner_user_id", "key", unique=True),
     )
+
+class EmailTemplate(Base):
+    __tablename__ = "email_templates"
+
+    id = uuid_pk()
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    created_at = now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", back_populates="email_templates")
+
 
 class Lead(Base):
     __tablename__ = "leads"

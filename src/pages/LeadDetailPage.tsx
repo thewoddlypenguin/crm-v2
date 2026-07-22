@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { CONTACT_PATHS, STATUS_LABELS } from "../types";
-import type { Activity, ContactPath, Lead, SegmentOption } from "../types";
+import type { Activity, ContactPath, EmailTemplate, Lead, SegmentOption } from "../types";
 import * as api from "../api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Mail, StickyNote, Clock, User as UserIcon, LayoutList } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export default function LeadDetailPage() {
@@ -35,12 +35,18 @@ export default function LeadDetailPage() {
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editNoteText, setEditNoteText] = useState("");
 
+  // All activities (for history stream)
+  const [activities, setActivities] = useState<Activity[]>([]);
+
   // Email compose state
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [emailSending, setEmailSending] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [emailSuccess, setEmailSuccess] = useState(false);
+
+  // Email templates
+  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
 
   const [form, setForm] = useState({
     first_name: "",
@@ -90,14 +96,17 @@ export default function LeadDetailPage() {
       }
 
       try {
-        const [leadData, segmentOptions, activityData] = await Promise.all([
+        const [leadData, segmentOptions, activityData, templateData] = await Promise.all([
           api.getLead(id),
           api.listSegments(),
           api.listActivities(id),
+          api.listEmailTemplates(),
         ]);
 
         if (cancelled) return;
 
+        setTemplates(templateData);
+        setActivities(activityData);
         setLead(leadData);
         setSegments(segmentOptions);
         setNotes(activityData.filter((a) => a.activity_type === "NOTE"));
@@ -134,10 +143,11 @@ export default function LeadDetailPage() {
     setShowAdvanced(false);
   };
 
-  const refreshNotes = async () => {
+  const refreshActivities = async () => {
     if (!id) return;
     const activityData = await api.listActivities(id);
     setNotes(activityData.filter((a) => a.activity_type === "NOTE"));
+    setActivities(activityData);
   };
 
   const handleAddNote = async () => {
@@ -145,7 +155,7 @@ export default function LeadDetailPage() {
     try {
       await api.createActivity(id, { activity_type: "NOTE", body: noteText.trim() });
       setNoteText("");
-      await refreshNotes();
+      await refreshActivities();
     } catch (err) {
       console.error(err);
     }
@@ -157,7 +167,7 @@ export default function LeadDetailPage() {
       await api.updateActivity(id, noteId, editNoteText.trim());
       setEditingNoteId(null);
       setEditNoteText("");
-      await refreshNotes();
+      await refreshActivities();
     } catch (err) {
       console.error(err);
     }
@@ -167,7 +177,7 @@ export default function LeadDetailPage() {
     if (!id || !confirm("Delete this note?")) return;
     try {
       await api.deleteActivity(id, noteId);
-      await refreshNotes();
+      await refreshActivities();
     } catch (err) {
       console.error(err);
     }
@@ -183,6 +193,7 @@ export default function LeadDetailPage() {
       setEmailSubject("");
       setEmailBody("");
       setEmailSuccess(true);
+      await refreshActivities();
     } catch (err: unknown) {
       setEmailError(err instanceof Error ? err.message : "Failed to send email");
     } finally {
@@ -299,16 +310,53 @@ export default function LeadDetailPage() {
     );
   }
 
+  // Activity type labels for the history stream
+  const ACTIVITY_LABELS: Record<string, string> = {
+    NOTE: "Note",
+    STATUS_CHANGE: "Status Change",
+    OUTREACH_SENT: "Email Sent",
+    FOLLOW_UP_SENT: "Follow-up Sent",
+    REPLY_RECEIVED: "Reply Received",
+    CALL_BOOKED: "Call Booked",
+    OTHER: "Other",
+  };
+
   if (!editing) {
     return (
-      <div className="mx-auto max-w-6xl space-y-6">
+      <div className="mx-auto max-w-6xl">
+        {/* Sticky right-side page nav */}
+        <nav
+          aria-label="Page sections"
+          className="hidden xl:flex fixed right-6 top-1/2 -translate-y-1/2 z-30 flex-col gap-1 rounded-xl border border-border bg-card/90 backdrop-blur p-2 shadow-sm"
+        >
+          {[
+            { id: "section-overview", label: "Overview", Icon: UserIcon },
+            { id: "section-details", label: "Details", Icon: LayoutList },
+            { id: "section-notes", label: "Notes", Icon: StickyNote },
+            { id: "section-email", label: "Email", Icon: Mail },
+            { id: "section-history", label: "History", Icon: Clock },
+          ].map(({ id: sId, label, Icon }) => (
+            <button
+              key={sId}
+              type="button"
+              title={label}
+              onClick={() => document.getElementById(sId)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="hidden 2xl:inline">{label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="space-y-6">
         {error && (
           <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
             {error}
           </div>
         )}
 
-        <Card className="overflow-hidden border-border/70">
+        <Card id="section-overview" className="overflow-hidden border-border/70">
           <CardHeader className="gap-6 bg-muted/30 pb-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div className="space-y-3">
@@ -355,7 +403,7 @@ export default function LeadDetailPage() {
           </CardHeader>
         </Card>
 
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div id="section-details" className="grid gap-6 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">
             <Card>
               <CardHeader>
@@ -431,7 +479,7 @@ export default function LeadDetailPage() {
         </div>
 
         {/* ── Internal Notes ── */}
-        <Card>
+        <Card id="section-notes">
           <CardHeader>
             <CardTitle className="text-base">Internal Notes</CardTitle>
           </CardHeader>
@@ -512,7 +560,7 @@ export default function LeadDetailPage() {
         </Card>
 
         {/* ── Compose Email ── */}
-        <Card>
+        <Card id="section-email">
           <CardHeader>
             <CardTitle className="text-base">Send Email</CardTitle>
           </CardHeader>
@@ -525,6 +573,31 @@ export default function LeadDetailPage() {
             {emailError && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
                 {emailError}
+              </div>
+            )}
+            {templates.length > 0 && (
+              <div className="space-y-2">
+                <Label>Use a template</Label>
+                <Select
+                  value=""
+                  onValueChange={(tid) => {
+                    const tpl = templates.find((t) => t.id === tid);
+                    if (tpl) {
+                      setEmailSubject(tpl.subject);
+                      setEmailBody(tpl.body);
+                      setEmailSuccess(false);
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a template..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
             <div className="space-y-2">
@@ -555,6 +628,40 @@ export default function LeadDetailPage() {
             </Button>
           </CardContent>
         </Card>
+
+        {/* ── Activity History ── */}
+        <Card id="section-history">
+          <CardHeader>
+            <CardTitle className="text-base">Activity History</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {activities.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No activity yet.</p>
+            ) : (
+              <ol className="relative border-l border-border ml-2 space-y-4">
+                {activities.map((a) => (
+                  <li key={a.id} className="ml-4">
+                    <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border border-background bg-border" />
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-xs font-medium text-foreground">
+                        {ACTIVITY_LABELS[a.activity_type] ?? a.activity_type}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {a.occurred_at
+                          ? formatDistanceToNow(new Date(a.occurred_at), { addSuffix: true })
+                          : ""}
+                      </span>
+                    </div>
+                    {a.body && (
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-3">{a.body}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </CardContent>
+        </Card>
+        </div>{/* end space-y-6 */}
       </div>
     );
   }

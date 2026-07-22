@@ -2,6 +2,7 @@ import type {
   AuthResponse,
   DashboardData,
   EmailSendRequest,
+  EmailTemplate,
   ImportResult,
   Lead,
   LeadsResponse,
@@ -186,6 +187,24 @@ export async function sendLeadEmail(leadId: string, data: EmailSendRequest): Pro
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+// ─── Email Templates ──────────────────────────────────────────────────────
+
+export async function listEmailTemplates(): Promise<EmailTemplate[]> {
+  return request("/email-templates");
+}
+
+export async function createEmailTemplate(data: { name: string; subject: string; body: string }): Promise<EmailTemplate> {
+  return request("/email-templates", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function updateEmailTemplate(id: string, data: { name?: string; subject?: string; body?: string }): Promise<EmailTemplate> {
+  return request(`/email-templates/${id}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function deleteEmailTemplate(id: string): Promise<void> {
+  await request(`/email-templates/${id}`, { method: "DELETE" });
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────

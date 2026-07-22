@@ -3,7 +3,7 @@
 import csv
 import io
 import os
-from models import Activity, Lead, User, Segment
+from models import Activity, EmailTemplate, Lead, User, Segment
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -21,7 +21,7 @@ from auth import (
 )
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
-from models import Activity, Lead, User
+from models import Activity, EmailTemplate, Lead, User
 
 api = APIRouter()
 
@@ -144,6 +144,18 @@ class SegmentUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class EmailTemplateCreate(BaseModel):
+    name: str
+    subject: str
+    body: str
+
+
+class EmailTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+
 def lead_to_dict(lead: Lead) -> dict:
     return {
         "id": lead.id,
@@ -203,6 +215,17 @@ def activity_to_dict(a: Activity) -> dict:
         "body": a.body,
         "occurred_at": a.occurred_at.isoformat() if a.occurred_at else None,
         "created_at": a.created_at.isoformat() if a.created_at else None,
+    }
+
+def template_to_dict(t: EmailTemplate) -> dict:
+    return {
+        "id": t.id,
+        "owner_user_id": t.owner_user_id,
+        "name": t.name,
+        "subject": t.subject,
+        "body": t.body,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
 
 
@@ -617,6 +640,62 @@ def delete_activity(lead_id: str, activity_id: str, current_user: User = Depends
     if activity.activity_type != "NOTE":
         raise HTTPException(status_code=400, detail="Only NOTE activities can be deleted")
     db.delete(activity)
+    db.commit()
+    return {"status": "deleted"}
+
+
+# ─── Email Templates ─────────────────────────────────────────────────────────
+
+@api.get("/email-templates")
+def list_email_templates(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    templates = db.query(EmailTemplate).filter(
+        EmailTemplate.owner_user_id == current_user.id
+    ).order_by(EmailTemplate.created_at.asc()).all()
+    return [template_to_dict(t) for t in templates]
+
+
+@api.post("/email-templates", status_code=201)
+def create_email_template(req: EmailTemplateCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    t = EmailTemplate(
+        owner_user_id=current_user.id,
+        name=req.name,
+        subject=req.subject,
+        body=req.body,
+    )
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return template_to_dict(t)
+
+
+@api.put("/email-templates/{template_id}")
+def update_email_template(template_id: str, req: EmailTemplateUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    t = db.query(EmailTemplate).filter(
+        EmailTemplate.id == template_id,
+        EmailTemplate.owner_user_id == current_user.id,
+    ).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if req.name is not None:
+        t.name = req.name
+    if req.subject is not None:
+        t.subject = req.subject
+    if req.body is not None:
+        t.body = req.body
+    db.commit()
+    db.refresh(t)
+    return template_to_dict(t)
+
+
+@api.delete("/email-templates/{template_id}")
+def delete_email_template(template_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    t = db.query(EmailTemplate).filter(
+        EmailTemplate.id == template_id,
+        EmailTemplate.owner_user_id == current_user.id,
+    ).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+    db.delete(t)
     db.commit()
     return {"status": "deleted"}
 
