@@ -4,8 +4,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from db import init_db
+from limiter import limiter
 
 
 def create_app(static_dir: str) -> FastAPI:
@@ -17,10 +21,23 @@ def create_app(static_dir: str) -> FastAPI:
 
     app = FastAPI()
 
+    # Rate limiting
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
+
+    # CORS_ORIGINS: comma-separated list of allowed origins.
+    # In production, set this to your domain, e.g. "https://crm.example.com".
+    # Defaults to "*" (open) only when explicitly left unset — fine for
+    # same-origin production deployments; set it for any public-facing deployment.
+    _raw_origins = os.environ.get("CORS_ORIGINS", "*")
+    _origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    # allow_credentials=True is incompatible with wildcard origins per the CORS spec.
+    _credentials = _origins != ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=_origins,
+        allow_credentials=_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

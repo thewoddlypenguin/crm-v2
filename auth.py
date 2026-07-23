@@ -12,7 +12,13 @@ from sqlalchemy.orm import Session
 from db import get_db
 from models import User
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "change-me-in-production")
+_raw_secret = os.environ.get("JWT_SECRET", "")
+if not _raw_secret:
+    raise RuntimeError(
+        "JWT_SECRET environment variable is not set. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+JWT_SECRET = _raw_secret
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 72
 
@@ -27,10 +33,9 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
 
 
-def create_access_token(user_id: str, email: str) -> str:
+def create_access_token(user_id: str) -> str:
     payload = {
         "sub": user_id,
-        "email": email,
         "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)

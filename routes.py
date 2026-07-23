@@ -7,7 +7,7 @@ from models import Activity, EmailSettings, EmailTemplate, Lead, User, Segment
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, and_
@@ -19,6 +19,7 @@ from auth import (
     hash_password,
     verify_password,
 )
+from limiter import limiter
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
 from models import Activity, EmailSettings, EmailTemplate, Lead, User
@@ -39,7 +40,7 @@ def legacy_segment_or_none(key: str | None) -> str | None:
 # ─── Pydantic Schemas ────────────────────────────────────────────────────────
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=10)
     full_name: Optional[str] = None
 
 
@@ -250,8 +251,19 @@ def email_settings_to_dict(s: EmailSettings) -> dict:
 
 # ─── Auth Routes ─────────────────────────────────────────────────────────────
 
+# Dummy hash used to keep login response time constant even when a user isn't found.
+# This prevents email enumeration via timing side-channel.
+_DUMMY_HASH = hash_password("__timing_guard__")
+
+
 @api.post("/auth/register", response_model=AuthResponse)
-def register(req: RegisterRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def register(request: Request, req: RegisterRequest, db: Session = Depends(get_db)):
+    # REGISTRATION_ENABLED defaults to "true". Set to "false" in production
+    # once your account is created to lock the endpoint.
+    if os.environ.get("REGISTRATION_ENABLED", "true").lower() != "true":
+        raise HTTPException(status_code=403, detail="Registration is closed")
+
     existing = db.query(User).filter(User.email == req.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -263,7 +275,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    token = create_access_token(user.id, user.email)
+    token = create_access_token(user.id)
     return AuthResponse(
         token=token,
         user={"id": user.id, "email": user.email, "full_name": user.full_name},
@@ -271,11 +283,15 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @api.post("/auth/login", response_model=AuthResponse)
-def login(req: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
-    if not user or not verify_password(req.password, user.password_hash):
+    # Always run bcrypt — prevents email enumeration via response-time difference
+    candidate_hash = user.password_hash if user else _DUMMY_HASH
+    password_ok = verify_password(req.password, candidate_hash)
+    if not user or not password_ok:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token(user.id, user.email)
+    token = create_access_token(user.id)
     return AuthResponse(
         token=token,
         user={"id": user.id, "email": user.email, "full_name": user.full_name},
@@ -756,7 +772,9 @@ def delete_email_template(template_id: str, current_user: User = Depends(get_cur
 # ─── Email ───────────────────────────────────────────────────────────────────
 
 @api.post("/leads/{lead_id}/email", status_code=201)
+@limiter.limit("20/minute")
 def send_lead_email(
+    request: Request,
     lead_id: str,
     req: EmailSendRequest,
     current_user: User = Depends(get_current_user),
