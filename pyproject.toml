@@ -17,6 +17,7 @@ dependencies = [
     "python-dateutil>=2.9.0.post0",
     "pydantic[email]>=2.12.5",
     "slowapi>=0.1.9",
+    "resend",
 ]
 
 [tool.uv]

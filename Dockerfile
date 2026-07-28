@@ -13,18 +13,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install Python dependencies
 COPY pyproject.toml uv.lock* ./
-RUN pip install uv && uv sync --no-dev
-
-# Copy full backend source
 COPY . .
+RUN pip install .
 
-# Copy built frontend from stage 1
 COPY --from=frontend-build /app/dist ./dist
 
-# Expose port
 EXPOSE 8000
 
-# Run with uvicorn
-CMD ["uv", "run", "uvicorn", "app:asgi", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app:asgi", "--host", "0.0.0.0", "--port", "8000"]
