@@ -44,3 +44,11 @@ export function ScoreBadge({ score }: { score: number }) {
   const color = score >= 10 ? "text-green-600" : score >= 7 ? "text-yellow-600" : "text-muted-foreground";
   return <span className={cn("text-sm font-semibold", color)}>{score}</span>;
 }
+
+export function DncBadge() {
+  return (
+    <Badge variant="outline" className="text-[10px] font-semibold uppercase tracking-wider text-destructive border-destructive/40 bg-destructive/10">
+      DNC
+    </Badge>
+  );
+}

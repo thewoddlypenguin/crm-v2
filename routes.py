@@ -1378,6 +1378,11 @@ def gmail_callback(
     except Exception as exc:
         google_email = "unknown@google.com"
 
+    # Encrypt tokens before storing
+    from crypto_utils import encrypt_token
+    encrypted_access = encrypt_token(access_token)
+    encrypted_refresh = encrypt_token(refresh_token or "")
+
     # Upsert GmailConnection
     conn = db.query(GmailConnection).filter(GmailConnection.owner_user_id == user_id).first()
     if not conn:
@@ -1386,8 +1391,8 @@ def gmail_callback(
 
     conn.provider = "gmail"
     conn.google_email = google_email
-    conn.access_token = access_token
-    conn.refresh_token = refresh_token or conn.refresh_token  # preserve existing if not returned
+    conn.access_token = encrypted_access
+    conn.refresh_token = encrypted_refresh or conn.refresh_token  # preserve existing if not returned
     conn.token_expiry = token_expiry
     conn.sync_enabled = True
     conn.last_error = None

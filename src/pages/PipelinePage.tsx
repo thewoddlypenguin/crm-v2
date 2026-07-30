@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import type { PipelineData, Lead, LeadStatus } from "../types";
 import { STATUSES, STATUS_LABELS } from "../types";
 import * as api from "../api";
-import { PriorityBadge, StatusBadge, ScoreBadge } from "@/components/Badges";
+import { PriorityBadge, StatusBadge, ScoreBadge, DncBadge } from "@/components/Badges";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -93,6 +93,7 @@ export default function PipelinePage() {
                         <div className="flex items-center gap-2">
                           <PriorityBadge tier={lead.priority_tier} />
                           <ScoreBadge score={lead.total_score} />
+                          {lead.do_not_contact && <DncBadge />}
                         </div>
                         {lead.next_follow_up_at && (
                           <p className={`text-xs ${new Date(lead.next_follow_up_at) < new Date() ? "text-red-500 font-medium" : "text-muted-foreground"}`}>

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import type { Lead, LeadStatus, PriorityTier, SegmentOption } from "../types";
 import { STATUSES, STATUS_LABELS } from "../types";
 import * as api from "../api";
-import { PriorityBadge, StatusBadge, ScoreBadge } from "@/components/Badges";
+import { PriorityBadge, StatusBadge, ScoreBadge, DncBadge } from "@/components/Badges";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -320,13 +320,16 @@ export default function LeadsPage() {
                   </TableCell>
 
                   <TableCell className="font-medium">
-                    <Link
-                      to={`/leads/${lead.id}`}
-                      className="hover:underline"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {lead.full_name || "—"}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        to={`/leads/${lead.id}`}
+                        className="hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {lead.full_name || "—"}
+                      </Link>
+                      {lead.do_not_contact && <DncBadge />}
+                    </div>
                   </TableCell>
 
                   <TableCell className="text-muted-foreground">{lead.business_name || "—"}</TableCell>

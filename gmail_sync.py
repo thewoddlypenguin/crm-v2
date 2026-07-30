@@ -32,7 +32,11 @@ def refresh_access_token(conn) -> str | None:
     Mutates ``conn`` in place (updates access_token, token_expiry, last_error).
     The caller is responsible for committing the session.
     """
-    if not conn.refresh_token:
+    from crypto_utils import decrypt_token, encrypt_token
+
+    # Decrypt the stored refresh token
+    plain_refresh = decrypt_token(conn.refresh_token or "")
+    if not plain_refresh:
         conn.last_error = "No refresh token available — reconnect Gmail"
         return None
 
@@ -44,7 +48,7 @@ def refresh_access_token(conn) -> str | None:
             data={
                 "client_id": os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""),
                 "client_secret": os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
-                "refresh_token": conn.refresh_token,
+                "refresh_token": plain_refresh,
                 "grant_type": "refresh_token",
             },
             timeout=30,
@@ -54,7 +58,7 @@ def refresh_access_token(conn) -> str | None:
         new_access = data.get("access_token")
         expires_in = data.get("expires_in", 3600)
         if new_access:
-            conn.access_token = new_access
+            conn.access_token = encrypt_token(new_access)
             conn.token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
             conn.last_error = None
             return new_access
@@ -72,8 +76,11 @@ def _get_valid_token(conn) -> str | None:
 
     Does NOT commit — the caller owns the session commit.
     """
-    if conn.access_token and conn.token_expiry and conn.token_expiry > datetime.utcnow() + timedelta(minutes=1):
-        return conn.access_token
+    from crypto_utils import decrypt_token
+
+    plain_access = decrypt_token(conn.access_token) if conn.access_token else None
+    if plain_access and conn.token_expiry and conn.token_expiry > datetime.utcnow() + timedelta(minutes=1):
+        return plain_access
     return refresh_access_token(conn)
 
 
