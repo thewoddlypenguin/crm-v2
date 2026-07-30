@@ -63,6 +63,7 @@ export default function LeadDetailPage() {
     source_url: "",
     personalization_note: "",
     outreach_angle: "",
+    do_not_contact: false,
   });
 
   const fillForm = (data: Lead) => {
@@ -82,6 +83,7 @@ export default function LeadDetailPage() {
       source_url: data.source_url || "",
       personalization_note: data.personalization_note || "",
       outreach_angle: data.outreach_angle || "",
+      do_not_contact: data.do_not_contact ?? false,
     });
   };
 
@@ -226,6 +228,7 @@ export default function LeadDetailPage() {
         source_url: form.source_url || null,
         personalization_note: form.personalization_note || null,
         outreach_angle: form.outreach_angle || null,
+        do_not_contact: form.do_not_contact,
       };
 
       const updated = await api.updateLead(id, data);
@@ -443,6 +446,14 @@ export default function LeadDetailPage() {
                 {detailRow("Personalization Note", lead.personalization_note)}
                 {detailRow("Outreach Angle", lead.outreach_angle)}
                 {detailRow("Outcome Note", lead.outcome_note)}
+                <div className="space-y-1 rounded-lg border bg-background p-4">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                    Do Not Contact
+                  </div>
+                  <div className={`text-sm font-medium ${lead.do_not_contact ? "text-destructive" : "text-muted-foreground"}`}>
+                    {lead.do_not_contact ? "⛔ Do Not Contact" : "Allowed"}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -565,6 +576,11 @@ export default function LeadDetailPage() {
             <CardTitle className="text-base">Send Email</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {lead.do_not_contact && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm font-medium text-destructive">
+                ⛔ Do Not Contact — outbound email is blocked for this lead. Remove the DNC flag in Edit to re-enable.
+              </div>
+            )}
             {emailSuccess && (
               <div className={`rounded-md p-3 text-sm ${emailSuccess.includes("test mode") ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-green-500/10 text-green-600"}`}>
                 {emailSuccess}
@@ -622,7 +638,7 @@ export default function LeadDetailPage() {
             <Button
               size="sm"
               onClick={handleSendEmail}
-              disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
+              disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || lead.do_not_contact}
             >
               {emailSending ? "Sending..." : "Send Email"}
             </Button>
@@ -842,6 +858,19 @@ export default function LeadDetailPage() {
                     value={form.outreach_angle}
                     onChange={(e) => set("outreach_angle", e.target.value)}
                   />
+                </div>
+
+                <div className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                  <input
+                    type="checkbox"
+                    id="do_not_contact"
+                    checked={form.do_not_contact}
+                    onChange={(e) => setForm((prev) => ({ ...prev, do_not_contact: e.target.checked }))}
+                    className="h-4 w-4 accent-destructive"
+                  />
+                  <Label htmlFor="do_not_contact" className="cursor-pointer text-sm font-medium text-destructive">
+                    Do Not Contact — block all outbound email to this lead
+                  </Label>
                 </div>
               </div>
             )}

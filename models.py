@@ -156,6 +156,9 @@ class Lead(Base):
     total_score = Column(Integer, default=0, index=True)
     priority_tier = Column(PRIORITY_TIER_ENUM, default="C", index=True)
 
+    # Compliance
+    do_not_contact = Column(Boolean, default=False, nullable=False)
+
     # Pipeline
     status = Column(STATUS_ENUM, default="NEW", index=True)
     last_contacted_at = Column(DateTime, nullable=True)

@@ -2,6 +2,7 @@
 
 import csv
 import io
+import logging
 import os
 from models import Activity, EmailSettings, EmailTemplate, Lead, User, Segment
 from datetime import datetime, timedelta
@@ -25,6 +26,7 @@ from db import get_db
 from models import Activity, EmailSettings, EmailTemplate, Lead, User
 
 api = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ----Helper to allow for custom segments
@@ -102,6 +104,7 @@ class LeadUpdate(BaseModel):
     contactability_score: Optional[int] = Field(None, ge=0, le=2)
     strategic_fit_score: Optional[int] = Field(None, ge=0, le=2)
     outcome_note: Optional[str] = None
+    do_not_contact: Optional[bool] = None
 
 class StatusChangeRequest(BaseModel):
     status: str
@@ -199,6 +202,7 @@ def lead_to_dict(lead: Lead) -> dict:
         "follow_up_count": lead.follow_up_count,
         "next_follow_up_at": lead.next_follow_up_at.isoformat() if lead.next_follow_up_at else None,
         "outcome_note": lead.outcome_note,
+        "do_not_contact": lead.do_not_contact,
         "created_at": lead.created_at.isoformat() if lead.created_at else None,
         "updated_at": lead.updated_at.isoformat() if lead.updated_at else None,
     }
@@ -497,6 +501,11 @@ def update_lead(lead_id: str, req: LeadUpdate, current_user: User = Depends(get_
     updates.pop("segment", None)
     segment_id = updates.pop("segment_id", None)
 
+    # do_not_contact is a boolean — must be handled separately since False is falsy
+    if req.do_not_contact is not None:
+        lead.do_not_contact = req.do_not_contact
+    updates.pop("do_not_contact", None)
+
     for k, v in updates.items():
         setattr(lead, k, v)
 
@@ -789,6 +798,19 @@ def send_lead_email(
     lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+
+    # Do Not Contact guard — must be checked before any send attempt
+    if lead.do_not_contact:
+        logger.warning(
+            "DNC_BLOCKED lead_id=%s user_id=%s recipient=%s",
+            lead.id,
+            current_user.id,
+            req.to_address or lead.email or "<no address>",
+        )
+        raise HTTPException(
+            status_code=451,  # 451 Unavailable For Legal Reasons — semantically correct for DNC
+            detail="This lead is marked Do Not Contact. Email send blocked.",
+        )
 
     recipient = req.to_address or lead.email
     if not recipient:

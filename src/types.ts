@@ -67,6 +67,7 @@ export interface Lead {
   follow_up_count: number;
   next_follow_up_at: string | null;
   outcome_note: string | null;
+  do_not_contact: boolean;
   created_at: string | null;
   updated_at: string | null;
 }
