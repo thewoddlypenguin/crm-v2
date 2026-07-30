@@ -48,6 +48,10 @@ export default function LeadDetailPage() {
   // Email templates
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
 
+  // Tab navigation for view mode
+  type ViewTab = "contact" | "business" | "notes" | "email" | "history";
+  const [activeTab, setActiveTab] = useState<ViewTab>("contact");
+
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -325,9 +329,6 @@ export default function LeadDetailPage() {
   };
 
   // ── Tab state ──
-  type ViewTab = "contact" | "business" | "notes" | "email" | "history";
-  const [activeTab, setActiveTab] = useState<ViewTab>("contact");
-
   const TABS: { id: ViewTab; label: string }[] = [
     { id: "contact", label: "Contact Details" },
     { id: "business", label: "Business Profile" },
