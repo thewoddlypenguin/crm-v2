@@ -309,6 +309,19 @@ def sync_connection(conn, db: "Session") -> None:
         )
         db.add(act)
 
+        # Create Notification record for inbound emails
+        if direction == "inbound":
+            from models import Notification
+            lead_name = " ".join(filter(None, [lead.first_name, lead.last_name])) or lead.email or "Unknown"
+            notification = Notification(
+                owner_user_id=user_id,
+                lead_id=lead.id,
+                title=f"New email from {lead_name}",
+                body=f"Inbound email logged as note for {lead_name}: {headers['subject'] or '(no subject)'}",
+                notification_type="email_received",
+            )
+            db.add(notification)
+
     # Update connection status
     conn.last_sync_at = datetime.utcnow()
     conn.last_error = None

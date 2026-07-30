@@ -14,6 +14,7 @@ import {
   Plus,
   Settings,
 } from "lucide-react";
+import NotificationBell from "./NotificationBell";
 
 interface LayoutProps {
   user: User;
@@ -111,9 +112,10 @@ export default function Layout({ user, onLogout, children }: LayoutProps) {
           >
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
-          <h1 className="text-lg font-semibold text-foreground">
+          <h1 className="text-lg font-semibold text-foreground flex-1">
             {NAV_ITEMS.find((i) => location.pathname.startsWith(i.href))?.label || "Leverage CRM"}
           </h1>
+          <NotificationBell />
         </header>
         <main className="p-4 lg:p-6">{children}</main>
       </div>

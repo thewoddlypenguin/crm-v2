@@ -152,6 +152,17 @@ export interface GmailStatus {
   last_error: string | null;
 }
 
+export interface Notification {
+  id: string;
+  owner_user_id: string;
+  lead_id: string | null;
+  title: string;
+  body: string | null;
+  notification_type: string;
+  is_read: boolean;
+  created_at: string | null;
+}
+
 export interface ImportResult {
   accepted: number;
   rejected: number;

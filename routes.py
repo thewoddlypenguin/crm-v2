@@ -25,7 +25,7 @@ from auth import (
 from limiter import limiter
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
-from models import Activity, EmailSettings, EmailTemplate, GmailConnection, OAuthState, SyncedEmail, Lead, User, Segment
+from models import Activity, EmailSettings, EmailTemplate, GmailConnection, Notification, OAuthState, SyncedEmail, Lead, User, Segment
 
 api = APIRouter()
 logger = logging.getLogger(__name__)
@@ -150,6 +150,10 @@ class SegmentUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class MarkNotificationRead(BaseModel):
+    notification_id: str
+
+
 class EmailTemplateCreate(BaseModel):
     name: str
     subject: str
@@ -252,6 +256,19 @@ def email_settings_to_dict(s: EmailSettings) -> dict:
         "reply_to_email": s.reply_to_email,
         "test_mode_enabled": s.test_mode_enabled,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+def notification_to_dict(n) -> dict:
+    return {
+        "id": n.id,
+        "owner_user_id": n.owner_user_id,
+        "lead_id": n.lead_id,
+        "title": n.title,
+        "body": n.body,
+        "notification_type": n.notification_type,
+        "is_read": n.is_read,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
     }
 
 
@@ -1461,5 +1478,67 @@ def gmail_sync_toggle(
     conn.sync_enabled = not conn.sync_enabled
     db.commit()
     return {"sync_enabled": conn.sync_enabled}
-    db.refresh(lead)
-    return lead_to_dict(lead)
+
+
+# ─── Notifications ──────────────────────────────────────────────────────────
+
+
+@api.get("/notifications")
+def list_notifications(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    unread_only: bool = False,
+):
+    """List notifications for the current user, newest first."""
+    q = db.query(Notification).filter(Notification.owner_user_id == current_user.id)
+    if unread_only:
+        q = q.filter(Notification.is_read == False)
+    q = q.order_by(Notification.created_at.desc()).limit(50)
+    return [notification_to_dict(n) for n in q.all()]
+
+
+@api.get("/notifications/unread-count")
+def unread_notification_count(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the count of unread notifications."""
+    count = (
+        db.query(Notification)
+        .filter(Notification.owner_user_id == current_user.id, Notification.is_read == False)
+        .count()
+    )
+    return {"count": count}
+
+
+@api.post("/notifications/mark-read")
+def mark_notification_read(
+    body: MarkNotificationRead,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark a single notification as read."""
+    n = db.query(Notification).filter(
+        Notification.id == body.notification_id,
+        Notification.owner_user_id == current_user.id,
+    ).first()
+    if not n:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    n.is_read = True
+    db.commit()
+    return notification_to_dict(n)
+
+
+@api.post("/notifications/mark-all-read")
+def mark_all_notifications_read(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark all notifications as read for the current user."""
+    rows = (
+        db.query(Notification)
+        .filter(Notification.owner_user_id == current_user.id, Notification.is_read == False)
+        .update({"is_read": True})
+    )
+    db.commit()
+    return {"updated": rows}
