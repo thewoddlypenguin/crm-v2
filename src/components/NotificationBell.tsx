@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as api from "../api";
-import type { Notification } from "../types";
+import type { CrmNotification } from "../types";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,7 +15,7 @@ import { formatDistanceToNow } from "date-fns";
 
 export default function NotificationBell() {
   const navigate = useNavigate();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notifications, setNotifications] = useState<CrmNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -55,7 +55,7 @@ export default function NotificationBell() {
     }
   };
 
-  const handleClick = async (n: Notification) => {
+  const handleClick = async (n: CrmNotification) => {
     if (!n.is_read) {
       try {
         await api.markNotificationRead(n.id);

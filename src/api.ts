@@ -11,7 +11,7 @@ import type {
   LeadStatus,
   PipelineData,
   Activity,
-  Notification,
+  CrmNotification,
   PriorityTier,
   SegmentValue,
   SegmentOption,
@@ -304,7 +304,7 @@ export async function gmailSyncToggle(): Promise<{ sync_enabled: boolean }> {
 
 // ─── Notifications ─────────────────────────────────────────────────────────
 
-export async function listNotifications(unreadOnly = false): Promise<Notification[]> {
+export async function listNotifications(unreadOnly = false): Promise<CrmNotification[]> {
   const sp = new URLSearchParams();
   if (unreadOnly) sp.set("unread_only", "true");
   return request(`/notifications?${sp.toString()}`);
@@ -314,7 +314,7 @@ export async function getUnreadNotificationCount(): Promise<{ count: number }> {
   return request("/notifications/unread-count");
 }
 
-export async function markNotificationRead(notificationId: string): Promise<Notification> {
+export async function markNotificationRead(notificationId: string): Promise<CrmNotification> {
   return request("/notifications/mark-read", {
     method: "POST",
     body: JSON.stringify({ notification_id: notificationId }),

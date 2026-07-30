@@ -152,7 +152,7 @@ export interface GmailStatus {
   last_error: string | null;
 }
 
-export interface Notification {
+export interface CrmNotification {
   id: string;
   owner_user_id: string;
   lead_id: string | null;
