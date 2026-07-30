@@ -281,6 +281,8 @@ export async function downloadCSV(params?: {
   });
   if (!res.ok) throw new Error("Export failed");
   return res.blob();
+}
+
 // ─── Gmail ──────────────────────────────────────────────────────────────────
 
 export async function getGmailAuthUrl(): Promise<{ auth_url: string }> {
