@@ -298,4 +298,4 @@ export async function gmailDisconnect(): Promise<void> {
 export async function gmailSyncToggle(): Promise<{ sync_enabled: boolean }> {
   return request("/gmail/sync-toggle", { method: "POST" });
 }
-}
+
