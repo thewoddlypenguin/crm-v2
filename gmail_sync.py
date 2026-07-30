@@ -46,8 +46,8 @@ def refresh_access_token(conn) -> str | None:
         resp = httpx.post(
             "https://oauth2.googleapis.com/token",
             data={
-                "client_id": os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""),
-                "client_secret": os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
+                "client_id": os.environ.get("GOOGLE_OAUTH_CLIENT_ID") or os.environ.get("GOOGLE_CLIENT_ID", ""),
+                "client_secret": os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET") or os.environ.get("GOOGLE_CLIENT_SECRET", ""),
                 "refresh_token": plain_refresh,
                 "grant_type": "refresh_token",
             },

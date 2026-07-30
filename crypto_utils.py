@@ -20,7 +20,7 @@ def _get_fernet() -> Fernet:
 
     Raises RuntimeError if the key is missing or invalid.
     """
-    raw = os.environ.get("TOKEN_ENCRYPTION_KEY")
+    raw = os.environ.get("TOKEN_ENCRYPTION_KEY") or os.environ.get("GMAIL_TOKEN_ENCRYPTION_KEY")
     if not raw:
         raise RuntimeError(
             "TOKEN_ENCRYPTION_KEY environment variable is not set. "

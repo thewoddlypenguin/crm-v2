@@ -1317,7 +1317,7 @@ def gmail_auth_url(
         "GOOGLE_OAUTH_REDIRECT_URI",
         "http://localhost:5173/api/gmail/callback",
     )
-    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID") or os.environ.get("GOOGLE_CLIENT_ID", "")
     if not client_id:
         raise HTTPException(status_code=500, detail="GOOGLE_OAUTH_CLIENT_ID not configured")
 
@@ -1349,8 +1349,8 @@ def gmail_callback(
     db.commit()
 
     # Exchange code for tokens
-    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID") or os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET") or os.environ.get("GOOGLE_CLIENT_SECRET", "")
     redirect_uri = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")
     if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="Google OAuth not configured")
