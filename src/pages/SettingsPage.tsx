@@ -1,11 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import SegmentsSettingsPanel from '../components/SegmentsSettingsPanel';
 import EmailSettingsPanel from '../components/EmailSettingsPanel';
+import GmailSettingsPanel from '../components/GmailSettingsPanel';
 
-type SettingsTab = 'segments' | 'email';
+type SettingsTab = 'segments' | 'email' | 'gmail';
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('segments');
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab') as SettingsTab | null;
+  const [activeTab, setActiveTab] = useState<SettingsTab>(tabParam || 'segments');
+
+  useEffect(() => {
+    if (tabParam && ['segments', 'email', 'gmail'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam]);
 
   return (
     <div className="page">
@@ -30,11 +40,19 @@ export default function SettingsPage() {
           >
             Email
           </button>
+          <button
+            type="button"
+            className={`settings-nav-item${activeTab === 'gmail' ? ' is-active' : ''}`}
+            onClick={() => setActiveTab('gmail')}
+          >
+            Gmail
+          </button>
         </aside>
 
         <main className="settings-panel">
           {activeTab === 'segments' && <SegmentsSettingsPanel />}
           {activeTab === 'email' && <EmailSettingsPanel />}
+          {activeTab === 'gmail' && <GmailSettingsPanel />}
         </main>
       </div>
     </div>

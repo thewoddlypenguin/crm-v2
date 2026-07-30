@@ -144,6 +144,14 @@ export interface EmailTemplate {
   updated_at: string | null;
 }
 
+export interface GmailStatus {
+  connected: boolean;
+  google_email: string | null;
+  sync_enabled: boolean | null;
+  last_sync_at: string | null;
+  last_error: string | null;
+}
+
 export interface ImportResult {
   accepted: number;
   rejected: number;

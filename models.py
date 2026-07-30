@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import (
     Column, String, Text, Integer, DateTime, ForeignKey, Enum as SAEnum, Index, Boolean
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 
 from db import Base
 
@@ -191,3 +191,68 @@ class Activity(Base):
     created_at = now()
 
     lead = relationship("Lead", back_populates="activities")
+
+
+class GmailConnection(Base):
+    """Per-user Gmail OAuth connection. One row per user (upsert pattern)."""
+    __tablename__ = "gmail_connections"
+
+    id = uuid_pk()
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+
+    provider = Column(String, default="gmail", nullable=False)
+    google_email = Column(String, nullable=False)
+
+    # OAuth tokens — stored as-is; encryption is a follow-up
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=False)
+    token_expiry = Column(DateTime, nullable=True)
+
+    # Sync configuration
+    sync_enabled = Column(Boolean, default=True, nullable=False)
+    last_sync_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+
+    created_at = now()
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owner = relationship("User", backref=backref("gmail_connection", uselist=False))
+
+
+class SyncedEmail(Base):
+    """Deduplicated Gmail messages synced for a lead."""
+    __tablename__ = "synced_emails"
+
+    id = uuid_pk()
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    lead_id = Column(String, ForeignKey("leads.id"), nullable=False, index=True)
+
+    provider = Column(String, default="gmail", nullable=False)
+    external_message_id = Column(String, nullable=False)
+    thread_id = Column(String, nullable=True)
+    direction = Column(String, nullable=False)  # "inbound" or "outbound"
+
+    subject = Column(Text, nullable=True)
+    from_email = Column(String, nullable=False)
+    to_emails = Column(Text, nullable=True)
+    cc_emails = Column(Text, nullable=True)
+    sent_at = Column(DateTime, nullable=False, index=True)
+    snippet = Column(Text, nullable=True)
+
+    synced_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    lead = relationship("Lead", backref=backref("synced_emails", lazy="dynamic"))
+
+    __table_args__ = (
+        Index("ix_synced_emails_user_message", "user_id", "external_message_id", unique=True),
+    )
+
+
+class OAuthState(Base):
+    """Temporary OAuth state tokens for CSRF protection during OAuth flows."""
+    __tablename__ = "oauth_states"
+
+    id = uuid_pk()
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    state = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

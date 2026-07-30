@@ -1,4 +1,7 @@
+import logging
 import os
+import threading
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -8,7 +11,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from db import init_db
+from db import init_db, SessionLocal
 from limiter import limiter
 
 
@@ -80,7 +83,43 @@ def create_app(static_dir: str) -> FastAPI:
                 },
             )
 
+    # Start background Gmail sync thread
+    _start_gmail_sync_thread()
+
     return app
+
+
+def _sync_loop():
+    """Background loop: periodically syncs Gmail accounts."""
+    from gmail_sync import sync_connection, SYNC_INTERVAL_MINUTES
+    logger = logging.getLogger(__name__)
+
+    while True:
+        try:
+            db = SessionLocal()
+            from models import GmailConnection
+            connections = db.query(GmailConnection).filter(
+                GmailConnection.sync_enabled == True,
+            ).all()
+            for conn in connections:
+                try:
+                    sync_connection(conn, db)
+                except Exception as exc:
+                    logger.error("Gmail sync error for user %s: %s", conn.owner_user_id, exc)
+                    conn.last_error = str(exc)[:500]
+                    db.commit()
+            db.close()
+        except Exception as exc:
+            logger.error("Gmail sync cycle error: %s", exc)
+        time.sleep(SYNC_INTERVAL_MINUTES * 60)
+
+
+def _start_gmail_sync_thread():
+    """Start the background sync thread as a daemon."""
+    thr = threading.Thread(target=_sync_loop, daemon=True, name="gmail-sync")
+    thr.start()
+    logging.getLogger(__name__).info("Gmail sync thread started (interval=%s min)", 
+        os.environ.get("GMAIL_SYNC_INTERVAL_MINUTES", "5"))
 
 
 asgi = create_app("./dist")

@@ -4,6 +4,7 @@ import type {
   EmailSendRequest,
   EmailSettings,
   EmailTemplate,
+  GmailStatus,
   ImportResult,
   Lead,
   LeadsResponse,
@@ -280,4 +281,21 @@ export async function downloadCSV(params?: {
   });
   if (!res.ok) throw new Error("Export failed");
   return res.blob();
+// ─── Gmail ──────────────────────────────────────────────────────────────────
+
+export async function getGmailAuthUrl(): Promise<{ auth_url: string }> {
+  return request("/gmail/auth-url");
+}
+
+export async function getGmailStatus(): Promise<GmailStatus> {
+  return request("/gmail/status");
+}
+
+export async function gmailDisconnect(): Promise<void> {
+  await request("/gmail/disconnect", { method: "POST" });
+}
+
+export async function gmailSyncToggle(): Promise<{ sync_enabled: boolean }> {
+  return request("/gmail/sync-toggle", { method: "POST" });
+}
 }

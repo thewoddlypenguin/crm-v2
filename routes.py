@@ -2,14 +2,16 @@
 
 import csv
 import io
+import json
 import logging
 import os
-from models import Activity, EmailSettings, EmailTemplate, Lead, User, Segment
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
@@ -23,7 +25,7 @@ from auth import (
 from limiter import limiter
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
-from models import Activity, EmailSettings, EmailTemplate, Lead, User
+from models import Activity, EmailSettings, EmailTemplate, GmailConnection, OAuthState, SyncedEmail, Lead, User, Segment
 
 api = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1269,5 +1271,190 @@ def public_create_lead(
     ))
 
     db.commit()
+# ─── Gmail OAuth ─────────────────────────────────────────────────────────────
+
+class GmailStatusResponse(BaseModel):
+    connected: bool
+    google_email: str | None = None
+    sync_enabled: bool | None = None
+    last_sync_at: str | None = None
+    last_error: str | None = None
+
+
+@api.get("/gmail/auth-url")
+def gmail_auth_url(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate an OAuth authorization URL and store state for CSRF validation."""
+    state = str(uuid.uuid4())
+    # Prune stale states for this user
+    db.query(OAuthState).filter(
+        OAuthState.user_id == current_user.id,
+        OAuthState.created_at < datetime.utcnow() - timedelta(minutes=10),
+    ).delete()
+    db.add(OAuthState(user_id=current_user.id, state=state))
+    db.commit()
+
+    redirect_uri = os.environ.get(
+        "GOOGLE_OAUTH_REDIRECT_URI",
+        "http://localhost:5173/api/gmail/callback",
+    )
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    if not client_id:
+        raise HTTPException(status_code=500, detail="GOOGLE_OAUTH_CLIENT_ID not configured")
+
+    params = urlencode({
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email",
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+    })
+    return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{params}"}
+
+
+@api.get("/gmail/callback")
+def gmail_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Handle the OAuth callback from Google. Validates state, exchanges code for tokens."""
+    # Validate state
+    stored = db.query(OAuthState).filter(OAuthState.state == state).first()
+    if not stored:
+        raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+    user_id = stored.user_id
+    db.delete(stored)
+    db.commit()
+
+    # Exchange code for tokens
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    redirect_uri = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+
+    # Fire the token exchange with httpx (deferred import to avoid boot failure)
+    try:
+        import httpx
+        resp = httpx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Token exchange failed: {exc}")
+
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expires_in", 3600)
+    token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+
+    if not access_token:
+        raise HTTPException(status_code=502, detail="No access_token in OAuth response")
+
+    # Fetch the user's Google email
+    try:
+        import httpx
+        info_resp = httpx.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        info_resp.raise_for_status()
+        google_email = info_resp.json().get("email", "unknown@google.com")
+    except Exception as exc:
+        google_email = "unknown@google.com"
+
+    # Upsert GmailConnection
+    conn = db.query(GmailConnection).filter(GmailConnection.owner_user_id == user_id).first()
+    if not conn:
+        conn = GmailConnection(owner_user_id=user_id)
+        db.add(conn)
+
+    conn.provider = "gmail"
+    conn.google_email = google_email
+    conn.access_token = access_token
+    conn.refresh_token = refresh_token or conn.refresh_token  # preserve existing if not returned
+    conn.token_expiry = token_expiry
+    conn.sync_enabled = True
+    conn.last_error = None
+    db.commit()
+
+    # Redirect to the frontend settings page
+    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+    return RedirectResponse(url=f"{frontend_url}/settings?tab=gmail", status_code=302)
+
+
+@api.get("/gmail/status")
+def gmail_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the current Gmail connection status for the authenticated user."""
+    conn = db.query(GmailConnection).filter(GmailConnection.owner_user_id == current_user.id).first()
+    if not conn:
+        return GmailStatusResponse(connected=False)
+    return GmailStatusResponse(
+        connected=True,
+        google_email=conn.google_email,
+        sync_enabled=conn.sync_enabled,
+        last_sync_at=conn.last_sync_at.isoformat() if conn.last_sync_at else None,
+        last_error=conn.last_error,
+    )
+
+
+@api.post("/gmail/disconnect")
+def gmail_disconnect(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Disconnect Gmail and revoke the token."""
+    conn = db.query(GmailConnection).filter(GmailConnection.owner_user_id == current_user.id).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="No Gmail connection found")
+
+    # Attempt to revoke the token remotely
+    if conn.access_token:
+        try:
+            import httpx
+            httpx.post(
+                "https://oauth2.googleapis.com/revoke",
+                params={"token": conn.access_token},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=10,
+            )
+        except Exception:
+            logger.warning("Token revocation failed for user %s", current_user.id)
+
+    db.delete(conn)
+    db.commit()
+    return {"status": "disconnected"}
+
+
+@api.post("/gmail/sync-toggle")
+def gmail_sync_toggle(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Toggle sync_enabled on/off for the current user's Gmail connection."""
+    conn = db.query(GmailConnection).filter(GmailConnection.owner_user_id == current_user.id).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="No Gmail connection found")
+    conn.sync_enabled = not conn.sync_enabled
+    db.commit()
+    return {"sync_enabled": conn.sync_enabled}
     db.refresh(lead)
     return lead_to_dict(lead)
