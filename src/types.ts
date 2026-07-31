@@ -28,6 +28,15 @@ export type ActivityType =
 
 // ─── Models ───────────────────────────────────────────────────────────────
 
+export interface OrgMember {
+  user_id: string;
+  email: string;
+  full_name: string | null;
+  role: "owner" | "member";
+  created_at: string | null;
+  is_self: boolean;
+}
+
 export interface User {
   id: string;
   email: string;

@@ -152,6 +152,17 @@ class SegmentUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class OrgMemberAdd(BaseModel):
+    email: EmailStr
+    full_name: Optional[str] = None
+    role: str = "member"  # "owner" | "member"
+    password: Optional[str] = Field(None, min_length=10)
+
+
+class OrgMemberRoleUpdate(BaseModel):
+    role: str  # "owner" | "member"
+
+
 class MarkNotificationRead(BaseModel):
     notification_id: str
 
@@ -892,6 +903,127 @@ def send_lead_email(
     resp = activity_to_dict(activity)
     resp["simulated"] = result.simulated  # surface to frontend
     return resp
+
+
+# ─── Org Member Management ───────────────────────────────────────────────────
+
+@api.get("/org/members")
+def list_org_members(
+    org: OrgContext = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(OrganizationMember, User)
+        .join(User, User.id == OrganizationMember.user_id)
+        .filter(OrganizationMember.organization_id == org.id)
+        .order_by(OrganizationMember.created_at.asc())
+        .all()
+    )
+    return [
+        {
+            "user_id": m.user_id,
+            "email": u.email,
+            "full_name": u.full_name,
+            "role": m.role,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+            "is_self": m.user_id == org.user_id,
+        }
+        for m, u in rows
+    ]
+
+
+@api.post("/org/members", status_code=201)
+def add_org_member(
+    req: OrgMemberAdd,
+    org: OrgContext = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    if org.role != "owner":
+        raise HTTPException(status_code=403, detail="Only owners can manage members")
+    if req.role not in ("owner", "member"):
+        raise HTTPException(status_code=400, detail="role must be 'owner' or 'member'")
+
+    email = req.email.strip().lower()
+    user = db.query(User).filter(User.email == email).first()
+    temp_password = None
+    if not user:
+        import secrets as _secrets
+        raw = req.password or _secrets.token_urlsafe(12)
+        temp_password = None if req.password else raw
+        user = User(
+            email=email,
+            password_hash=hash_password(raw),
+            full_name=req.full_name,
+        )
+        db.add(user)
+        db.flush()
+
+    existing = db.query(OrganizationMember).filter(
+        OrganizationMember.organization_id == org.id,
+        OrganizationMember.user_id == user.id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"{email} is already a member")
+
+    db.add(OrganizationMember(
+        organization_id=org.id,
+        user_id=user.id,
+        role=req.role,
+    ))
+    db.commit()
+    return {
+        "user_id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": req.role,
+        "temp_password": temp_password,
+        "is_self": False,
+    }
+
+
+@api.patch("/org/members/{user_id}")
+def update_org_member_role(
+    user_id: str,
+    req: OrgMemberRoleUpdate,
+    org: OrgContext = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    if org.role != "owner":
+        raise HTTPException(status_code=403, detail="Only owners can manage members")
+    if req.role not in ("owner", "member"):
+        raise HTTPException(status_code=400, detail="role must be 'owner' or 'member'")
+    if user_id == org.user_id:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    membership = db.query(OrganizationMember).filter(
+        OrganizationMember.organization_id == org.id,
+        OrganizationMember.user_id == user_id,
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=404, detail="Member not found")
+    membership.role = req.role
+    db.commit()
+    return {"user_id": user_id, "role": req.role}
+
+
+@api.delete("/org/members/{user_id}")
+def remove_org_member(
+    user_id: str,
+    org: OrgContext = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    if org.role != "owner":
+        raise HTTPException(status_code=403, detail="Only owners can manage members")
+    if user_id == org.user_id:
+        raise HTTPException(status_code=400, detail="Cannot remove yourself")
+    membership = db.query(OrganizationMember).filter(
+        OrganizationMember.organization_id == org.id,
+        OrganizationMember.user_id == user_id,
+    ).first()
+    if not membership:
+        raise HTTPException(status_code=404, detail="Member not found")
+    db.delete(membership)
+    db.commit()
+    return {"status": "removed"}
 
 
 # ─── Dashboard Metrics ───────────────────────────────────────────────────────

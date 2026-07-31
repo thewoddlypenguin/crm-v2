@@ -15,6 +15,7 @@ import type {
   PriorityTier,
   SegmentValue,
   SegmentOption,
+  OrgMember,
 } from "./types";
 
 const BASE = "/api";
@@ -303,6 +304,33 @@ export async function gmailSyncToggle(): Promise<{ sync_enabled: boolean }> {
 }
 
 // ─── Notifications ─────────────────────────────────────────────────────────
+
+export async function listOrgMembers(): Promise<OrgMember[]> {
+  return request<OrgMember[]>("/org/members");
+}
+
+export async function addOrgMember(data: {
+  email: string;
+  full_name?: string;
+  role?: string;
+  password?: string;
+}): Promise<OrgMember & { temp_password?: string }> {
+  return request<OrgMember & { temp_password?: string }>("/org/members", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateOrgMemberRole(userId: string, role: string): Promise<{ user_id: string; role: string }> {
+  return request<{ user_id: string; role: string }>(`/org/members/${userId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function removeOrgMember(userId: string): Promise<void> {
+  await request<void>(`/org/members/${userId}`, { method: "DELETE" });
+}
 
 export async function listNotifications(unreadOnly = false): Promise<CrmNotification[]> {
   const sp = new URLSearchParams();

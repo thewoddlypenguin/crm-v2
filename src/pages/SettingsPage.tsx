@@ -3,8 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import SegmentsSettingsPanel from '../components/SegmentsSettingsPanel';
 import EmailSettingsPanel from '../components/EmailSettingsPanel';
 import GmailSettingsPanel from '../components/GmailSettingsPanel';
+import OrgMembersPanel from '../components/OrgMembersPanel';
 
-type SettingsTab = 'segments' | 'email' | 'gmail';
+type SettingsTab = 'segments' | 'email' | 'gmail' | 'members';
 
 export default function SettingsPage() {
   const [searchParams] = useSearchParams();
@@ -12,7 +13,7 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>(tabParam || 'segments');
 
   useEffect(() => {
-    if (tabParam && ['segments', 'email', 'gmail'].includes(tabParam)) {
+    if (tabParam && ['segments', 'email', 'gmail', 'members'].includes(tabParam)) {
       setActiveTab(tabParam);
     }
   }, [tabParam]);
@@ -47,12 +48,20 @@ export default function SettingsPage() {
           >
             Gmail
           </button>
+          <button
+            type="button"
+            className={`settings-nav-item${activeTab === 'members' ? ' is-active' : ''}`}
+            onClick={() => setActiveTab('members')}
+          >
+            Members
+          </button>
         </aside>
 
         <main className="settings-panel">
           {activeTab === 'segments' && <SegmentsSettingsPanel />}
           {activeTab === 'email' && <EmailSettingsPanel />}
           {activeTab === 'gmail' && <GmailSettingsPanel />}
+          {activeTab === 'members' && <OrgMembersPanel />}
         </main>
       </div>
     </div>
