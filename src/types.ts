@@ -37,6 +37,7 @@ export interface User {
 export interface Lead {
   id: string;
   owner_user_id: string;
+  organization_id: string | null;
   first_name: string | null;
   last_name: string | null;
   full_name: string | null;
@@ -75,6 +76,7 @@ export interface Activity {
   id: string;
   lead_id: string;
   user_id: string;
+  organization_id: string | null;
   activity_type: ActivityType;
   body: string | null;
   occurred_at: string | null;
@@ -84,6 +86,7 @@ export interface Activity {
 export interface SegmentOption {
   id: string;
   owner_user_id: string;
+  organization_id: string | null;
   key: string;
   label: string;
   sort_order: number;
@@ -137,6 +140,7 @@ export const EMAIL_PROVIDERS: EmailProvider[] = ["smtp", "resend", "sendgrid", "
 export interface EmailTemplate {
   id: string;
   owner_user_id: string;
+  organization_id: string | null;
   name: string;
   subject: string;
   body: string;

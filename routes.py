@@ -18,14 +18,16 @@ from sqlalchemy.orm import Session
 
 from auth import (
     create_access_token,
+    get_current_org,
     get_current_user,
     hash_password,
     verify_password,
+    OrgContext,
 )
 from limiter import limiter
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
-from models import Activity, EmailSettings, EmailTemplate, GmailConnection, Notification, OAuthState, SyncedEmail, Lead, User, Segment
+from models import Activity, EmailSettings, EmailTemplate, GmailConnection, Notification, OAuthState, SyncedEmail, Lead, User, Segment, Organization, OrganizationMember
 
 api = APIRouter()
 logger = logging.getLogger(__name__)
@@ -178,6 +180,7 @@ def lead_to_dict(lead: Lead) -> dict:
     return {
         "id": lead.id,
         "owner_user_id": lead.owner_user_id,
+        "organization_id": lead.organization_id,
         "first_name": lead.first_name,
         "last_name": lead.last_name,
         "full_name": lead.full_name,
@@ -217,6 +220,7 @@ def segment_to_dict(segment: Segment) -> dict:
     return {
         "id": segment.id,
         "owner_user_id": segment.owner_user_id,
+        "organization_id": segment.organization_id,
         "key": segment.key,
         "label": segment.label,
         "sort_order": segment.sort_order,
@@ -230,6 +234,7 @@ def activity_to_dict(a: Activity) -> dict:
         "id": a.id,
         "lead_id": a.lead_id,
         "user_id": a.user_id,
+        "organization_id": a.organization_id,
         "activity_type": a.activity_type,
         "body": a.body,
         "occurred_at": a.occurred_at.isoformat() if a.occurred_at else None,
@@ -240,6 +245,7 @@ def template_to_dict(t: EmailTemplate) -> dict:
     return {
         "id": t.id,
         "owner_user_id": t.owner_user_id,
+        "organization_id": t.organization_id,
         "name": t.name,
         "subject": t.subject,
         "body": t.body,
@@ -331,10 +337,10 @@ def get_me(current_user: User = Depends(get_current_user)):
 @api.get("/segments")
 def list_segments(
     include_inactive: bool = False,
-    current_user: User = Depends(get_current_user),
+    org: OrgContext = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Segment).filter(Segment.owner_user_id == current_user.id)
+    q = db.query(Segment).filter(Segment.organization_id == org.id)
     if not include_inactive:
         from sqlalchemy import true
         q = q.filter(Segment.is_active == true())
@@ -345,7 +351,7 @@ def list_segments(
 @api.post("/segments", status_code=201)
 def create_segment(
     req: SegmentCreate,
-    current_user: User = Depends(get_current_user),
+    org: OrgContext = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
     key = req.key.strip().lower()
@@ -357,14 +363,15 @@ def create_segment(
         raise HTTPException(status_code=400, detail="Segment label is required")
 
     existing = db.query(Segment).filter(
-        Segment.owner_user_id == current_user.id,
+        Segment.organization_id == org.id,
         Segment.key == key,
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="Segment key already exists")
 
     segment = Segment(
-        owner_user_id=current_user.id,
+        owner_user_id=org.user_id,
+        organization_id=org.id,
         key=key,
         label=label,
         sort_order=req.sort_order or 0,
@@ -380,12 +387,12 @@ def create_segment(
 def update_segment(
     segment_id: str,
     req: SegmentUpdate,
-    current_user: User = Depends(get_current_user),
+    org: OrgContext = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
     segment = db.query(Segment).filter(
         Segment.id == segment_id,
-        Segment.owner_user_id == current_user.id,
+        Segment.organization_id == org.id,
     ).first()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
@@ -398,7 +405,7 @@ def update_segment(
             raise HTTPException(status_code=400, detail="Segment key cannot be empty")
 
         existing = db.query(Segment).filter(
-            Segment.owner_user_id == current_user.id,
+            Segment.organization_id == org.id,
             Segment.key == updates["key"],
             Segment.id != segment.id,
         ).first()
@@ -429,10 +436,10 @@ def list_leads(
     sort_dir: Optional[str] = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_user),
+    org: OrgContext = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Lead).filter(Lead.owner_user_id == current_user.id)
+    q = db.query(Lead).filter(Lead.organization_id == org.id)
 
     if search:
         search_lower = f"%{search.lower()}%"
@@ -472,20 +479,21 @@ def list_leads(
 
 
 @api.post("/leads", status_code=201)
-def create_lead(req: LeadCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_lead(req: LeadCreate, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     payload = req.model_dump()
     payload.pop("segment", None)
     segment_id = payload.pop("segment_id", None)
 
     lead = Lead(
-        owner_user_id=current_user.id,
+        owner_user_id=org.user_id,
+        organization_id=org.id,
         **{k: v for k, v in payload.items() if v is not None},
     )
 
     if segment_id:
         segment = db.query(Segment).filter(
             Segment.id == segment_id,
-            Segment.owner_user_id == current_user.id,
+            Segment.organization_id == org.id,
         ).first()
         if not segment:
             raise HTTPException(status_code=400, detail="Invalid segment_id")
@@ -503,16 +511,16 @@ def create_lead(req: LeadCreate, current_user: User = Depends(get_current_user),
 
 
 @api.get("/leads/{lead_id}")
-def get_lead(lead_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+def get_lead(lead_id: str, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     return lead_to_dict(lead)
 
 
 @api.put("/leads/{lead_id}")
-def update_lead(lead_id: str, req: LeadUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+def update_lead(lead_id: str, req: LeadUpdate, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -531,7 +539,7 @@ def update_lead(lead_id: str, req: LeadUpdate, current_user: User = Depends(get_
     if segment_id:
         segment = db.query(Segment).filter(
             Segment.id == segment_id,
-            Segment.owner_user_id == current_user.id,
+            Segment.organization_id == org.id,
         ).first()
         if not segment:
             raise HTTPException(status_code=400, detail="Invalid segment_id")
@@ -554,8 +562,8 @@ def update_lead(lead_id: str, req: LeadUpdate, current_user: User = Depends(get_
 
 
 @api.delete("/leads/{lead_id}")
-def delete_lead(lead_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+def delete_lead(lead_id: str, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     db.query(Activity).filter(Activity.lead_id == lead_id).delete()
@@ -570,11 +578,11 @@ VALID_STATUSES = {"NEW", "SCORED", "READY_TO_CONTACT", "CONTACTED", "FOLLOW_UP_1
 
 
 @api.post("/leads/{lead_id}/status")
-def change_status(lead_id: str, req: StatusChangeRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def change_status(lead_id: str, req: StatusChangeRequest, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     if req.status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status: {req.status}")
 
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -584,7 +592,8 @@ def change_status(lead_id: str, req: StatusChangeRequest, current_user: User = D
     # Write activity
     activity = Activity(
         lead_id=lead.id,
-        user_id=current_user.id,
+        user_id=org.user_id,
+        organization_id=org.id,
         activity_type="STATUS_CHANGE",
         body=activity_body,
     )
@@ -595,13 +604,13 @@ def change_status(lead_id: str, req: StatusChangeRequest, current_user: User = D
 
 
 @api.post("/leads/bulk-status")
-def bulk_status_change(req: BulkStatusChange, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def bulk_status_change(req: BulkStatusChange, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     if req.status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status: {req.status}")
 
     leads = db.query(Lead).filter(
         Lead.id.in_(req.lead_ids),
-        Lead.owner_user_id == current_user.id,
+        Lead.organization_id == org.id,
     ).all()
 
     now = datetime.utcnow()
@@ -609,7 +618,8 @@ def bulk_status_change(req: BulkStatusChange, current_user: User = Depends(get_c
         activity_body = apply_status_transition(lead, req.status, now=now)
         db.add(Activity(
             lead_id=lead.id,
-            user_id=current_user.id,
+            user_id=org.user_id,
+            organization_id=org.id,
             activity_type="STATUS_CHANGE",
             body=activity_body,
             occurred_at=now,
@@ -619,17 +629,17 @@ def bulk_status_change(req: BulkStatusChange, current_user: User = Depends(get_c
     return {"updated": len(leads)}
 
 @api.post("/leads/bulk-segment")
-def bulk_segment_change(req: BulkSegmentChange, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def bulk_segment_change(req: BulkSegmentChange, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     segment = db.query(Segment).filter(
         Segment.id == req.segment_id,
-        Segment.owner_user_id == current_user.id,
+        Segment.organization_id == org.id,
     ).first()
     if not segment:
         raise HTTPException(status_code=400, detail="Invalid segment_id")
 
     leads = db.query(Lead).filter(
         Lead.id.in_(req.lead_ids),
-        Lead.owner_user_id == current_user.id,
+        Lead.organization_id == org.id,
     ).all()
 
     for lead in leads:
@@ -646,8 +656,8 @@ VALID_ACTIVITY_TYPES = {"NOTE", "STATUS_CHANGE", "OUTREACH_SENT", "FOLLOW_UP_SEN
 
 
 @api.get("/leads/{lead_id}/activities")
-def list_activities(lead_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+def list_activities(lead_id: str, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     activities = db.query(Activity).filter(Activity.lead_id == lead_id).order_by(Activity.occurred_at.desc()).all()
@@ -655,17 +665,18 @@ def list_activities(lead_id: str, current_user: User = Depends(get_current_user)
 
 
 @api.post("/leads/{lead_id}/activities", status_code=201)
-def create_activity(lead_id: str, req: ActivityCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_activity(lead_id: str, req: ActivityCreate, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     if req.activity_type not in VALID_ACTIVITY_TYPES:
         raise HTTPException(status_code=400, detail=f"Invalid activity type: {req.activity_type}")
 
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
     activity = Activity(
         lead_id=lead.id,
-        user_id=current_user.id,
+        user_id=org.user_id,
+        organization_id=org.id,
         activity_type=req.activity_type,
         body=req.body,
         occurred_at=req.occurred_at or datetime.utcnow(),
@@ -677,8 +688,8 @@ def create_activity(lead_id: str, req: ActivityCreate, current_user: User = Depe
 
 
 @api.put("/leads/{lead_id}/activities/{activity_id}")
-def update_activity(lead_id: str, activity_id: str, req: ActivityUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+def update_activity(lead_id: str, activity_id: str, req: ActivityUpdate, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     activity = db.query(Activity).filter(Activity.id == activity_id, Activity.lead_id == lead_id).first()
@@ -693,8 +704,8 @@ def update_activity(lead_id: str, activity_id: str, req: ActivityUpdate, current
 
 
 @api.delete("/leads/{lead_id}/activities/{activity_id}")
-def delete_activity(lead_id: str, activity_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+def delete_activity(lead_id: str, activity_id: str, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     activity = db.query(Activity).filter(Activity.id == activity_id, Activity.lead_id == lead_id).first()
@@ -744,17 +755,18 @@ def upsert_email_settings(req: EmailSettingsUpdate, current_user: User = Depends
 # ─── Email Templates ─────────────────────────────────────────────────────────
 
 @api.get("/email-templates")
-def list_email_templates(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_email_templates(org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     templates = db.query(EmailTemplate).filter(
-        EmailTemplate.owner_user_id == current_user.id
+        EmailTemplate.organization_id == org.id
     ).order_by(EmailTemplate.created_at.asc()).all()
     return [template_to_dict(t) for t in templates]
 
 
 @api.post("/email-templates", status_code=201)
-def create_email_template(req: EmailTemplateCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_email_template(req: EmailTemplateCreate, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     t = EmailTemplate(
-        owner_user_id=current_user.id,
+        owner_user_id=org.user_id,
+        organization_id=org.id,
         name=req.name,
         subject=req.subject,
         body=req.body,
@@ -766,10 +778,10 @@ def create_email_template(req: EmailTemplateCreate, current_user: User = Depends
 
 
 @api.put("/email-templates/{template_id}")
-def update_email_template(template_id: str, req: EmailTemplateUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_email_template(template_id: str, req: EmailTemplateUpdate, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     t = db.query(EmailTemplate).filter(
         EmailTemplate.id == template_id,
-        EmailTemplate.owner_user_id == current_user.id,
+        EmailTemplate.organization_id == org.id,
     ).first()
     if not t:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -785,10 +797,10 @@ def update_email_template(template_id: str, req: EmailTemplateUpdate, current_us
 
 
 @api.delete("/email-templates/{template_id}")
-def delete_email_template(template_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_email_template(template_id: str, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     t = db.query(EmailTemplate).filter(
         EmailTemplate.id == template_id,
-        EmailTemplate.owner_user_id == current_user.id,
+        EmailTemplate.organization_id == org.id,
     ).first()
     if not t:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -805,7 +817,7 @@ def send_lead_email(
     request: Request,
     lead_id: str,
     req: EmailSendRequest,
-    current_user: User = Depends(get_current_user),
+    org: OrgContext = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
     """
@@ -814,7 +826,7 @@ def send_lead_email(
     STUB: send_email() raises NotImplementedError until a provider is configured.
     The activity log is only written on successful send.
     """
-    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.owner_user_id == current_user.id).first()
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.organization_id == org.id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -823,7 +835,7 @@ def send_lead_email(
         logger.warning(
             "DNC_BLOCKED lead_id=%s user_id=%s recipient=%s",
             lead.id,
-            current_user.id,
+            org.user_id,
             req.to_address or lead.email or "<no address>",
         )
         raise HTTPException(
@@ -835,8 +847,8 @@ def send_lead_email(
     if not recipient:
         raise HTTPException(status_code=400, detail="No recipient address — set to_address or add an email to the lead")
 
-    # Load caller's email config
-    cfg = db.query(EmailSettings).filter(EmailSettings.owner_user_id == current_user.id).first()
+    # Load caller's email config (user-owned — each member sends as themselves)
+    cfg = db.query(EmailSettings).filter(EmailSettings.owner_user_id == org.user_id).first()
 
     from email_service import EmailConfig, EmailPayload, send_email  # deferred import
 
@@ -868,7 +880,8 @@ def send_lead_email(
     )
     activity = Activity(
         lead_id=lead.id,
-        user_id=current_user.id,
+        user_id=org.user_id,
+        organization_id=org.id,
         activity_type="OUTREACH_SENT",
         body=activity_body,
         occurred_at=datetime.utcnow(),
@@ -884,27 +897,28 @@ def send_lead_email(
 # ─── Dashboard Metrics ───────────────────────────────────────────────────────
 
 @api.get("/dashboard")
-def dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def dashboard(org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
     now = datetime.utcnow()
     week_ago = now - timedelta(days=7)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    base = db.query(Lead).filter(Lead.owner_user_id == current_user.id)
+    base = db.query(Lead).filter(Lead.organization_id == org.id)
 
     leads_contacted_week = base.filter(
         Lead.last_contacted_at >= week_ago,
         Lead.status.in_(["CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON"]),
     ).count()
 
+    # Shared metrics — count across the whole organization, not just this member
     replies_week = db.query(Activity).filter(
-        Activity.user_id == current_user.id,
+        Activity.organization_id == org.id,
         Activity.activity_type == "REPLY_RECEIVED",
         Activity.occurred_at >= week_ago,
     ).count()
 
     calls_booked_week = db.query(Activity).filter(
-        Activity.user_id == current_user.id,
+        Activity.organization_id == org.id,
         Activity.activity_type == "CALL_BOOKED",
         Activity.occurred_at >= week_ago,
     ).count()
@@ -1069,7 +1083,7 @@ def normalize_enum_value(field_name: str, value: str) -> str:
 @api.post("/import/csv")
 async def import_csv(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    org: OrgContext = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
     if not file.filename or not file.filename.endswith(".csv"):
@@ -1126,7 +1140,7 @@ async def import_csv(
             if not lead_data.get("full_name") and (lead_data.get("first_name") or lead_data.get("last_name")):
                 lead_data["full_name"] = f"{lead_data.get('first_name', '')} {lead_data.get('last_name', '')}".strip()
 
-            lead = Lead(owner_user_id=current_user.id, **lead_data)
+            lead = Lead(owner_user_id=org.user_id, organization_id=org.id, **lead_data)
             recalculate_scores(lead)
             db.add(lead)
             accepted += 1
@@ -1146,10 +1160,10 @@ def export_csv(
     status: Optional[str] = None,
     priority: Optional[str] = None,
     segment: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    org: OrgContext = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Lead).filter(Lead.owner_user_id == current_user.id)
+    q = db.query(Lead).filter(Lead.organization_id == org.id)
 
     if search:
         search_lower = f"%{search.lower()}%"
@@ -1208,8 +1222,8 @@ PIPELINE_ORDER = ["NEW", "SCORED", "READY_TO_CONTACT", "CONTACTED", "FOLLOW_UP_1
 
 
 @api.get("/pipeline")
-def get_pipeline(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    leads = db.query(Lead).filter(Lead.owner_user_id == current_user.id).all()
+def get_pipeline(org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    leads = db.query(Lead).filter(Lead.organization_id == org.id).all()
     grouped = {s: [] for s in PIPELINE_ORDER}
     for l in leads:
         status = l.status or "NEW"
@@ -1263,9 +1277,19 @@ def public_create_lead(
     if not owner:
         raise HTTPException(status_code=500, detail="No CRM owner configured")
 
+    # Resolve the owner's organization so the lead lands in shared org data
+    from models import OrganizationMember
+    membership = (
+        db.query(OrganizationMember)
+        .filter(OrganizationMember.user_id == owner.id)
+        .order_by(OrganizationMember.created_at.asc())
+        .first()
+    )
+    organization_id = membership.organization_id if membership else None
+
     # Build lead from allowed fields only
     lead_data = {k: v for k, v in req.model_dump().items() if v is not None}
-    lead = Lead(owner_user_id=owner.id, **lead_data)
+    lead = Lead(owner_user_id=owner.id, organization_id=organization_id, **lead_data)
 
     # Auto-generate full_name
     if not lead.full_name and (lead.first_name or lead.last_name):
@@ -1283,6 +1307,7 @@ def public_create_lead(
     db.add(Activity(
         lead_id=lead.id,
         user_id=owner.id,
+        organization_id=organization_id,
         activity_type="NOTE",
         body="Lead created via public intake form",
     ))

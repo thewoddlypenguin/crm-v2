@@ -50,6 +50,35 @@ ACTIVITY_TYPE_ENUM = SAEnum(
 
 # --- Models ---
 
+class Organization(Base):
+    """A shared workspace. Multiple users (OrganizationMember) share its data."""
+    __tablename__ = "organizations"
+
+    id = uuid_pk()
+    name = Column(String, nullable=False)
+    created_at = now()
+
+    members = relationship("OrganizationMember", back_populates="organization")
+
+
+class OrganizationMember(Base):
+    """Join table: user membership in an organization with a role."""
+    __tablename__ = "organization_members"
+
+    id = uuid_pk()
+    organization_id = Column(String, ForeignKey("organizations.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    role = Column(String, default="member", nullable=False)  # "owner" | "member"
+    created_at = now()
+
+    organization = relationship("Organization", back_populates="members")
+    user = relationship("User", back_populates="memberships")
+
+    __table_args__ = (
+        Index("ix_organization_members_org_user", "organization_id", "user_id", unique=True),
+    )
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -64,12 +93,14 @@ class User(Base):
     email_settings = relationship("EmailSettings", back_populates="owner", uselist=False)
 
     leads = relationship("Lead", back_populates="owner")
+    memberships = relationship("OrganizationMember", back_populates="user")
 
 class Segment(Base):
     __tablename__ = "segments"
 
     id = uuid_pk()
     owner_user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    organization_id = Column(String, ForeignKey("organizations.id"), nullable=True, index=True)
 
     key = Column(String, nullable=False)
     label = Column(String, nullable=False)
@@ -84,6 +115,7 @@ class Segment(Base):
 
     __table_args__ = (
         Index("ix_segments_owner_key_unique", "owner_user_id", "key", unique=True),
+        Index("ix_segments_org_key_unique", "organization_id", "key", unique=True),
     )
 
 class EmailSettings(Base):
@@ -113,6 +145,7 @@ class EmailTemplate(Base):
 
     id = uuid_pk()
     owner_user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    organization_id = Column(String, ForeignKey("organizations.id"), nullable=True, index=True)
     name = Column(String, nullable=False)
     subject = Column(String, nullable=False)
     body = Column(Text, nullable=False)
@@ -127,6 +160,7 @@ class Lead(Base):
 
     id = uuid_pk()
     owner_user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    organization_id = Column(String, ForeignKey("organizations.id"), nullable=True, index=True)
 
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
@@ -185,6 +219,7 @@ class Activity(Base):
     id = uuid_pk()
     lead_id = Column(String, ForeignKey("leads.id"), nullable=False, index=True)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    organization_id = Column(String, ForeignKey("organizations.id"), nullable=True, index=True)
     activity_type = Column(ACTIVITY_TYPE_ENUM, nullable=False)
     body = Column(Text, nullable=True)
     occurred_at = Column(DateTime, default=datetime.utcnow, index=True)
@@ -225,6 +260,7 @@ class SyncedEmail(Base):
 
     id = uuid_pk()
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    organization_id = Column(String, ForeignKey("organizations.id"), nullable=True, index=True)
     lead_id = Column(String, ForeignKey("leads.id"), nullable=False, index=True)
 
     provider = Column(String, default="gmail", nullable=False)

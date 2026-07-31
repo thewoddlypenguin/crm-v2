@@ -10,9 +10,11 @@ from datetime import datetime, timedelta
 import uuid
 
 from db import SessionLocal, init_db
-from models import User, Lead, Activity, Segment
+from models import User, Lead, Activity, Segment, Organization, OrganizationMember
 from auth import hash_password
 from business import recalculate_scores, apply_status_transition
+
+DEFAULT_ORG_NAME = os.environ.get("CRM_ORG_NAME", "Justin's Business")
 
 SEGMENTS = ["COACH", "CONSULTANT", "SOLOPRENEUR", "OTHER"]
 STATUSES = ["NEW", "SCORED", "READY_TO_CONTACT", "CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON", "LOST", "NURTURE"]
@@ -62,6 +64,18 @@ def seed():
         db.add(user)
         db.flush()
 
+        # Create (or reuse) the default org and add the demo user as owner
+        org = db.query(Organization).filter(Organization.name == DEFAULT_ORG_NAME).first()
+        if not org:
+            org = Organization(name=DEFAULT_ORG_NAME)
+            db.add(org)
+            db.flush()
+        db.add(OrganizationMember(
+            organization_id=org.id,
+            user_id=user.id,
+            role="owner",
+        ))
+
         # Create default segments for the demo user and build a key→id lookup
         segment_defs = [
             ("coach", "Coach"),
@@ -74,6 +88,7 @@ def seed():
             seg = Segment(
                 id=str(uuid.uuid4()),
                 owner_user_id=user.id,
+                organization_id=org.id,
                 key=key,
                 label=label,
                 sort_order=order,
@@ -125,6 +140,7 @@ def seed():
             lead = Lead(
                 id=str(uuid.uuid4()),
                 owner_user_id=user.id,
+                organization_id=org.id,
                 first_name=first,
                 last_name=last,
                 full_name=full,
@@ -155,6 +171,7 @@ def seed():
                 id=str(uuid.uuid4()),
                 lead_id=lead.id,
                 user_id=user.id,
+                organization_id=org.id,
                 activity_type="NOTE",
                 body=f"Initial research on {business}",
                 occurred_at=now - timedelta(days=7),
@@ -165,6 +182,7 @@ def seed():
                     id=str(uuid.uuid4()),
                     lead_id=lead.id,
                     user_id=user.id,
+                    organization_id=org.id,
                     activity_type="STATUS_CHANGE",
                     body=f"Status changed from NEW to {lead_status}",
                     occurred_at=now - timedelta(days=5),

@@ -13,6 +13,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+from models import Activity, Lead, SyncedEmail  # deferred-free; app imports gmail_sync only at runtime
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -164,6 +166,17 @@ def sync_connection(conn, db: "Session") -> None:
     user_id = conn.owner_user_id
     google_email = conn.google_email
 
+    # Resolve the connection owner's organization once per sync.
+    # Gmail connections are user-owned, but the leads/activities they produce
+    # are organization-shared — so matching is scoped by organization.
+    from models import OrganizationMember
+    membership = (
+        db.query(OrganizationMember)
+        .filter(OrganizationMember.user_id == user_id)
+        .first()
+    )
+    org_id = membership.organization_id if membership else None
+
     # 1. Get a valid token
     token = _get_valid_token(conn)
     if not token:
@@ -235,14 +248,16 @@ def sync_connection(conn, db: "Session") -> None:
         # Remove the user's own email from matching
         all_addresses.discard(google_email.lower())
 
-        # Find matching leads by exact email match
+        # Find matching leads by exact email match, scoped to the connection
+        # owner's organization (falls back to owner_user_id if no org yet).
         matching_leads = []
         for addr in all_addresses:
-            leads = db.query(Lead).filter(
-                Lead.owner_user_id == user_id,
-                Lead.email.ilike(addr),
-            ).all()
-            matching_leads.extend(leads)
+            q = db.query(Lead).filter(Lead.email.ilike(addr))
+            if org_id:
+                q = q.filter(Lead.organization_id == org_id)
+            else:
+                q = q.filter(Lead.owner_user_id == user_id)
+            matching_leads.extend(q.all())
 
         # Deduplicate by lead id
         seen_ids = set()
@@ -273,6 +288,7 @@ def sync_connection(conn, db: "Session") -> None:
         # Create SyncedEmail record
         synced = SyncedEmail(
             user_id=user_id,
+            organization_id=org_id,
             lead_id=lead.id,
             provider="gmail",
             external_message_id=msg_id,
@@ -303,24 +319,41 @@ def sync_connection(conn, db: "Session") -> None:
         act = Activity(
             lead_id=lead.id,
             user_id=user_id,
+            organization_id=org_id,
             activity_type=act_type,
             body=activity_body,
             occurred_at=sent_at,
         )
         db.add(act)
 
-        # Create Notification record for inbound emails
+        # Create Notification record for inbound emails — one row per org member
+        # (each member keeps independent is_read state).
         if direction == "inbound":
-            from models import Notification
+            from models import Notification, OrganizationMember, User
             lead_name = " ".join(filter(None, [lead.first_name, lead.last_name])) or lead.email or "Unknown"
-            notification = Notification(
-                owner_user_id=user_id,
-                lead_id=lead.id,
-                title=f"New email from {lead_name}",
-                body=f"Inbound email logged as note for {lead_name}: {headers['subject'] or '(no subject)'}",
-                notification_type="email_received",
-            )
-            db.add(notification)
+
+            # Fan out to every member of the organization (fallback: just the
+            # connection owner when no org is attached yet).
+            member_user_ids = []
+            if org_id:
+                member_user_ids = [
+                    m.user_id
+                    for m in db.query(OrganizationMember)
+                    .filter(OrganizationMember.organization_id == org_id)
+                    .all()
+                ]
+            if not member_user_ids:
+                member_user_ids = [user_id]
+
+            for member_id in member_user_ids:
+                notification = Notification(
+                    owner_user_id=member_id,
+                    lead_id=lead.id,
+                    title=f"New email from {lead_name}",
+                    body=f"Inbound email logged as note for {lead_name}: {headers['subject'] or '(no subject)'}",
+                    notification_type="email_received",
+                )
+                db.add(notification)
 
     # Update connection status
     conn.last_sync_at = datetime.utcnow()
