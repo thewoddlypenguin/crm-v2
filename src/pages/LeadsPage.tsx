@@ -225,7 +225,7 @@ export default function LeadsPage() {
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-sm text-muted-foreground">{selectedIds.size} selected</span>
       <span className="text-muted-foreground">→</span>
-      {["CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON", "CLIENT", "LOST"].map((s) => (
+      {["NEW", "CONTACTED", "FOLLOW_UP_1", "FOLLOW_UP_2", "REPLIED", "CALL_BOOKED", "WON", "CLIENT", "LOST"].map((s) => (
         <Button key={s} variant="outline" size="sm" onClick={() => handleBulkStatus(s as LeadStatus)}>
           {STATUS_LABELS[s as LeadStatus]}
         </Button>
