@@ -26,7 +26,7 @@ const statusStyles: Record<string, string> = {
 
 export function PriorityBadge({ tier }: { tier: PriorityTier }) {
   return (
-    <Badge variant="outline" className={cn("text-xs font-medium", tierStyles[tier])}>
+    <Badge variant="outline" className={cn("text-[11px] font-medium tracking-wide", tierStyles[tier])}>
       {tier}
     </Badge>
   );
@@ -34,7 +34,7 @@ export function PriorityBadge({ tier }: { tier: PriorityTier }) {
 
 export function StatusBadge({ status }: { status: LeadStatus }) {
   return (
-    <Badge variant="outline" className={cn("text-xs font-medium", statusStyles[status] || statusStyles.NEW)}>
+    <Badge variant="outline" className={cn("text-[11px] font-medium tracking-wide", statusStyles[status] || statusStyles.NEW)}>
       {STATUS_LABELS[status]}
     </Badge>
   );

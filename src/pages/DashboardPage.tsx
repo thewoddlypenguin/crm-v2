@@ -40,14 +40,16 @@ export default function DashboardPage() {
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi) => (
-          <Card key={kpi.label}>
+          <Card key={kpi.label} className="shadow-sm">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{kpi.label}</p>
                   <p className="text-3xl font-bold text-foreground">{kpi.value}</p>
                 </div>
-                <kpi.icon className={`h-8 w-8 ${kpi.color} opacity-80`} />
+                <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+                  <kpi.icon className={`h-5 w-5 ${kpi.color}`} />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -55,7 +57,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Follow-ups Due Today */}
-      <Card>
+      <Card className="shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Clock className="h-5 w-5 text-blue-500" />
@@ -71,12 +73,12 @@ export default function DashboardPage() {
                 <Link
                   key={lead.id}
                   to={`/leads/${lead.id}`}
-                  className="flex items-center justify-between p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 hover:bg-blue-500/10 transition-colors"
+                  className="flex items-center justify-between p-3 rounded-lg bg-blue-50 border border-blue-100 hover:bg-blue-100 transition-colors"
                 >
                   <div>
-                    <span className="font-medium text-foreground">{lead.full_name || lead.business_name}</span>
+                    <span className="text-sm font-semibold text-foreground">{lead.full_name || lead.business_name}</span>
                     {lead.business_name && lead.full_name && (
-                      <span className="text-muted-foreground ml-2 text-sm">{lead.business_name}</span>
+                      <span className="text-xs text-muted-foreground ml-2">{lead.business_name}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
@@ -91,7 +93,7 @@ export default function DashboardPage() {
       </Card>
 
       {/* Overdue Follow-ups */}
-      <Card>
+      <Card className="shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <AlertCircle className="h-5 w-5 text-red-500" />
@@ -107,17 +109,17 @@ export default function DashboardPage() {
                 <Link
                   key={lead.id}
                   to={`/leads/${lead.id}`}
-                  className="flex items-center justify-between p-3 rounded-lg bg-red-500/5 border border-red-500/20 hover:bg-red-500/10 transition-colors"
+                  className="flex items-center justify-between p-3 rounded-lg bg-red-50 border border-red-100 hover:bg-red-100 transition-colors"
                 >
                   <div>
-                    <span className="font-medium text-foreground">{lead.full_name || lead.business_name}</span>
+                    <span className="text-sm font-semibold text-foreground">{lead.full_name || lead.business_name}</span>
                     {lead.business_name && lead.full_name && (
-                      <span className="text-muted-foreground ml-2 text-sm">{lead.business_name}</span>
+                      <span className="text-xs text-muted-foreground ml-2">{lead.business_name}</span>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
                     {lead.next_follow_up_at && (
-                      <span className="text-xs text-red-500">
+                      <span className="text-xs font-semibold text-red-600">
                         {formatDistanceToNow(new Date(lead.next_follow_up_at), { addSuffix: true })}
                       </span>
                     )}

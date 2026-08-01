@@ -139,7 +139,7 @@ export default function LeadsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-3">
+      <div className="flex flex-col sm:flex-row gap-3 bg-card border border-border rounded-lg px-4 py-3 shadow-sm">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -260,34 +260,34 @@ export default function LeadsPage() {
 )}
 
 
-      <div className="border border-border rounded-lg overflow-hidden">
+      <div className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-10">
+              <TableHead className="w-10 bg-muted/50">
                 <Checkbox
                   checked={selectedIds.size === leads.length && leads.length > 0}
                   onCheckedChange={toggleAll}
                 />
               </TableHead>
-              <TableHead className="cursor-pointer" onClick={() => toggleSort("full_name")}>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("full_name")}>
                 Name
               </TableHead>
-              <TableHead>Business</TableHead>
-              <TableHead>Segment</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="cursor-pointer" onClick={() => toggleSort("total_score")}>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Business</TableHead>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Segment</TableHead>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</TableHead>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("total_score")}>
                 <div className="flex items-center gap-1">
                   Score <ArrowUpDown className="h-3 w-3" />
                 </div>
               </TableHead>
-              <TableHead>Priority</TableHead>
-              <TableHead className="cursor-pointer" onClick={() => toggleSort("next_follow_up_at")}>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Priority</TableHead>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("next_follow_up_at")}>
                 <div className="flex items-center gap-1">
                   Next Follow-up <ArrowUpDown className="h-3 w-3" />
                 </div>
               </TableHead>
-              <TableHead className="w-10" />
+              <TableHead className="w-10 bg-muted/50" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -307,23 +307,23 @@ export default function LeadsPage() {
               leads.map((lead) => (
                 <TableRow
                   key={lead.id}
-                  className="cursor-pointer"
+                  className="cursor-pointer hover:bg-muted/30 transition-colors"
                   onClick={() => {
                     window.location.href = `/leads/${lead.id}`;
                   }}
                 >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
+                  <TableCell className="py-3" onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={selectedIds.has(lead.id)}
                       onCheckedChange={() => toggleSelect(lead.id)}
                     />
                   </TableCell>
 
-                  <TableCell className="font-medium">
+                  <TableCell className="py-3">
                     <div className="flex items-center gap-2">
                       <Link
                         to={`/leads/${lead.id}`}
-                        className="hover:underline"
+                        className="font-medium text-foreground text-sm hover:underline"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {lead.full_name || "—"}
@@ -332,28 +332,28 @@ export default function LeadsPage() {
                     </div>
                   </TableCell>
 
-                  <TableCell className="text-muted-foreground">{lead.business_name || "—"}</TableCell>
+                  <TableCell className="py-3 text-xs text-muted-foreground">{lead.business_name || "—"}</TableCell>
 
-                  <TableCell>
+                  <TableCell className="py-3">
                     <span className="text-xs text-muted-foreground">
                       {lead.segment_label || (lead.segment ? segmentLabelMap[lead.segment] || lead.segment : "—")}
                     </span>
                   </TableCell>
 
 
-                  <TableCell>
+                  <TableCell className="py-3">
                     <StatusBadge status={lead.status} />
                   </TableCell>
 
-                  <TableCell>
+                  <TableCell className="py-3">
                     <ScoreBadge score={lead.total_score} />
                   </TableCell>
 
-                  <TableCell>
+                  <TableCell className="py-3">
                     <PriorityBadge tier={lead.priority_tier} />
                   </TableCell>
 
-                  <TableCell>
+                  <TableCell className="py-3">
                     {lead.next_follow_up_at ? (
                       <span
                         className={`text-xs ${
@@ -369,7 +369,7 @@ export default function LeadsPage() {
                     )}
                   </TableCell>
 
-                  <TableCell onClick={(e) => e.stopPropagation()}>
+                  <TableCell className="py-3" onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="sm">
