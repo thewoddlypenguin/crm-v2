@@ -31,6 +31,7 @@ export default function LeadCreatePage() {
     segment_id: "",
     niche: "",
     email: "",
+    phone: "",
     website_url: "",
     contact_path: "" as ContactPath | "",
     linkedin_url: "",
@@ -65,6 +66,7 @@ export default function LeadCreatePage() {
         segment_id: form.segment_id || null,
         niche: form.niche || null,
         email: form.email || null,
+        phone: form.phone || null,
         website_url: form.website_url || null,
         contact_path: form.contact_path || null,
         linkedin_url: form.linkedin_url || null,
@@ -137,20 +139,31 @@ export default function LeadCreatePage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="segment">Segment</Label>
-                <Select value={form.segment_id} onValueChange={(v) => set("segment_id", v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {segments.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-              </Select>
+                <Label htmlFor="phone">Phone</Label>
+                <Input
+                  id="phone"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => set("phone", e.target.value)}
+                  placeholder="+1 (555) 000-0000"
+                />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="segment">Segment</Label>
+              <Select value={form.segment_id} onValueChange={(v) => set("segment_id", v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {segments.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">

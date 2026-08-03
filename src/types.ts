@@ -57,6 +57,7 @@ export interface Lead {
   niche: string | null;
   website_url: string | null;
   email: string | null;
+  phone: string | null;
   contact_path: ContactPath | null;
   linkedin_url: string | null;
   location_text: string | null;

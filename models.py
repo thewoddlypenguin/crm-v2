@@ -172,6 +172,7 @@ class Lead(Base):
     niche = Column(String, nullable=True)
     website_url = Column(String, nullable=True)
     email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
     contact_path = Column(CONTACT_PATH_ENUM, nullable=True)
     linkedin_url = Column(String, nullable=True)
     location_text = Column(String, nullable=True)

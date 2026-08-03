@@ -70,6 +70,7 @@ class LeadCreate(BaseModel):
     niche: Optional[str] = None
     website_url: Optional[str] = None
     email: Optional[str] = None
+    phone: Optional[str] = None
     contact_path: Optional[str] = None
     linkedin_url: Optional[str] = None
     location_text: Optional[str] = None
@@ -94,6 +95,7 @@ class LeadUpdate(BaseModel):
     niche: Optional[str] = None
     website_url: Optional[str] = None
     email: Optional[str] = None
+    phone: Optional[str] = None
     contact_path: Optional[str] = None
     linkedin_url: Optional[str] = None
     location_text: Optional[str] = None
@@ -202,6 +204,7 @@ def lead_to_dict(lead: Lead) -> dict:
         "niche": lead.niche,
         "website_url": lead.website_url,
         "email": lead.email,
+        "phone": lead.phone,
         "contact_path": lead.contact_path,
         "linkedin_url": lead.linkedin_url,
         "location_text": lead.location_text,
