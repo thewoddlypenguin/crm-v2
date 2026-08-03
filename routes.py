@@ -476,6 +476,10 @@ def list_leads(
         sort_col = Lead.created_at
     elif sort_by == "last_contacted_at":
         sort_col = Lead.last_contacted_at
+    elif sort_by == "niche":
+        sort_col = Lead.niche
+    elif sort_by == "full_name":
+        sort_col = Lead.full_name
     else:
         sort_col = Lead.total_score
 

@@ -271,9 +271,16 @@ export default function LeadsPage() {
                 />
               </TableHead>
               <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("full_name")}>
-                Name
+                <div className="flex items-center gap-1">
+                  Name {sortBy === "full_name" && <ArrowUpDown className="h-3 w-3" />}
+                </div>
               </TableHead>
               <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Business</TableHead>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("niche")}>
+                <div className="flex items-center gap-1">
+                  Niche {sortBy === "niche" && <ArrowUpDown className="h-3 w-3" />}
+                </div>
+              </TableHead>
               <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Segment</TableHead>
               <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</TableHead>
               <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("total_score")}>
@@ -293,13 +300,13 @@ export default function LeadsPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
                   Loading...
                 </TableCell>
               </TableRow>
             ) : leads.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
                   No leads found
                 </TableCell>
               </TableRow>
@@ -333,6 +340,8 @@ export default function LeadsPage() {
                   </TableCell>
 
                   <TableCell className="py-3 text-xs text-muted-foreground">{lead.business_name || "—"}</TableCell>
+
+                  <TableCell className="py-3 text-xs text-muted-foreground">{lead.niche || "—"}</TableCell>
 
                   <TableCell className="py-3">
                     <span className="text-xs text-muted-foreground">
