@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export default function LeadDetailPage() {
@@ -186,6 +186,18 @@ export default function LeadDetailPage() {
     try {
       await api.deleteActivity(id, noteId);
       await refreshActivities();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteLead = async () => {
+    if (!id || !lead) return;
+    const name = lead.full_name || lead.business_name || "this lead";
+    if (!confirm(`Permanently delete ${name}? This cannot be undone.`)) return;
+    try {
+      await api.deleteLead(id);
+      navigate("/leads");
     } catch (err) {
       console.error(err);
     }
@@ -380,6 +392,9 @@ export default function LeadDetailPage() {
                   Back
                 </Button>
                 <Button onClick={handleEdit}>Edit</Button>
+                <Button variant="destructive" size="icon" onClick={handleDeleteLead} title="Delete lead">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3 border-t pt-4 text-sm text-muted-foreground md:grid-cols-3">
