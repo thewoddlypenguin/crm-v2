@@ -205,8 +205,8 @@ def _send_via_resend(payload: EmailPayload, cfg: EmailConfig) -> EmailResult:
             "from": from_value,
             "to": [payload.to_address],
             "subject": payload.subject,
-            "html": payload.body,
-            "text": _strip_html(payload.body),
+            "html": _plain_to_html(payload.body),
+            "text": payload.body,
         }
 
         if cfg.reply_to_email and cfg.reply_to_email.strip():
@@ -240,10 +240,51 @@ def _send_via_resend(payload: EmailPayload, cfg: EmailConfig) -> EmailResult:
         )
 
 
+def _plain_to_html(text: str) -> str:
+    """
+    Convert a plain-text message body (with \\n line breaks) to a clean HTML email.
+
+    Rules:
+    - Blank line (double newline) → paragraph break  (<p>…</p>)
+    - Single newline within a paragraph → <br>
+    - Wraps everything in a minimal inline-styled container for good rendering
+      across Gmail, Outlook, Apple Mail, etc.
+    """
+    import html as html_lib
+
+    # If the text is already HTML (from a future rich-text editor), pass through.
+    stripped = text.strip()
+    if stripped.startswith("<") and ("</p>" in stripped or "<br" in stripped):
+        return stripped
+
+    # Normalise line endings
+    normalised = stripped.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Split into paragraphs on blank lines
+    raw_paragraphs = normalised.split("\n\n")
+
+    html_paragraphs: list[str] = []
+    for para in raw_paragraphs:
+        if not para.strip():
+            continue
+        # Escape HTML entities, then convert single newlines to <br>
+        escaped = html_lib.escape(para.strip())
+        with_breaks = escaped.replace("\n", "<br>\n")
+        html_paragraphs.append(f"<p>{with_breaks}</p>")
+
+    body_html = "\n".join(html_paragraphs)
+
+    return (
+        '<div style="font-family:sans-serif;font-size:15px;line-height:1.6;'
+        'color:#1a1a1a;max-width:600px;">\n'
+        f"{body_html}\n"
+        "</div>"
+    )
+
+
 def _strip_html(value: str) -> str:
     """
-    Very lightweight fallback plain-text generator.
-    Good enough for tomorrow; can be improved later.
+    Convert HTML body back to plain text for the text/plain MIME part.
     """
     return (
         value.replace("<br>", "\n")
