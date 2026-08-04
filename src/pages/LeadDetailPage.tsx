@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { CONTACT_PATHS, STATUS_LABELS } from "../types";
-import type { Activity, ContactPath, EmailTemplate, Lead, SegmentOption } from "../types";
+import { CONTACT_PATHS, STATUSES, STATUS_LABELS } from "../types";
+import type { Activity, ContactPath, EmailTemplate, Lead, LeadStatus, SegmentOption } from "../types";
 import * as api from "../api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ export default function LeadDetailPage() {
   const [error, setError] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  const [changingStatus, setChangingStatus] = useState(false);
   const [notes, setNotes] = useState<Activity[]>([]);
   const [noteText, setNoteText] = useState("");
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
@@ -200,6 +201,21 @@ export default function LeadDetailPage() {
       navigate("/leads");
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleStatusChange = async (newStatus: LeadStatus) => {
+    if (!id || !lead) return;
+    setChangingStatus(true);
+    try {
+      const updated = await api.changeStatus(id, newStatus);
+      setLead(updated);
+      fillForm(updated);
+      await refreshActivities();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setChangingStatus(false);
     }
   };
 
@@ -374,8 +390,21 @@ export default function LeadDetailPage() {
                     {lead.business_name || "No business name"}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <span className={badgeClass("default")}>{statusLabel}</span>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <Select
+                    value={lead.status}
+                    onValueChange={(v) => handleStatusChange(v as LeadStatus)}
+                    disabled={changingStatus}
+                  >
+                    <SelectTrigger className={`h-7 w-[150px] text-xs ${badgeClass("default")} border-0 px-3 py-1`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STATUSES.map((s) => (
+                        <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <span className={badgeClass(getPriorityTone(lead.priority_tier) as "default" | "success" | "warning" | "muted")}>
                     Priority {displayValue(lead.priority_tier)}
                   </span>
