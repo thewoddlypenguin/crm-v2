@@ -131,6 +131,9 @@ class EmailSettings(Base):
     from_name = Column(String, nullable=True)
     reply_to_email = Column(String, nullable=True)
 
+    # Signature appended to every outbound email
+    signature = Column(Text, nullable=True)
+
     # Gate: must be explicitly disabled before any live send is attempted
     test_mode_enabled = Column(Boolean, default=True, nullable=False)
 

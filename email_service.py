@@ -25,6 +25,7 @@ class EmailConfig:
     from_email: str | None = None
     from_name: str | None = None
     reply_to_email: str | None = None
+    signature: str | None = None
     test_mode_enabled: bool = True
 
 
@@ -55,7 +56,7 @@ def send_email(payload: EmailPayload, config: EmailConfig | None = None) -> Emai
     prepared_payload = EmailPayload(
         to_address=payload.to_address.strip(),
         subject=payload.subject.strip(),
-        body=_apply_signature(payload.body),
+        body=_apply_signature(payload.body, cfg),
     )
 
     logger.info(
@@ -145,12 +146,16 @@ def send_email(payload: EmailPayload, config: EmailConfig | None = None) -> Emai
     return result
 
 
-def _apply_signature(body: str) -> str:
+def _apply_signature(body: str, config: "EmailConfig | None" = None) -> str:
     """
-    Append a simple signature from EMAIL_SIGNATURE if configured.
-    For now, keep it lightweight and text-oriented.
+    Append signature to the plain-text body before HTML conversion.
+    Priority: DB-stored signature (from EmailSettings) > EMAIL_SIGNATURE env var.
     """
-    signature = os.environ.get("EMAIL_SIGNATURE", "").replace("\\n", "\n").strip()
+    if config and config.signature and config.signature.strip():
+        signature = config.signature.strip()
+    else:
+        signature = os.environ.get("EMAIL_SIGNATURE", "").replace("\\n", "\n").strip()
+
     if not signature:
         return body
 
@@ -158,8 +163,7 @@ def _apply_signature(body: str) -> str:
     if not body:
         return signature
 
-    html_break = "<br><br>" if "<" in body and ">" in body else "\n\n"
-    return f"{body}{html_break}--{html_break}{signature}"
+    return f"{body}\n\n--\n{signature}"
 
 
 def _simulate(payload: EmailPayload, cfg: EmailConfig) -> EmailResult:

@@ -40,6 +40,7 @@ export default function EmailSettingsPanel() {
     from_email: "",
     from_name: "",
     reply_to_email: "",
+    signature: "",
     test_mode_enabled: true,
   });
 
@@ -67,6 +68,7 @@ export default function EmailSettingsPanel() {
         from_email: s.from_email ?? "",
         from_name: s.from_name ?? "",
         reply_to_email: s.reply_to_email ?? "",
+        signature: s.signature ?? "",
         test_mode_enabled: s.test_mode_enabled,
       });
     } catch {
@@ -101,6 +103,7 @@ export default function EmailSettingsPanel() {
         from_email: cfgForm.from_email || null,
         from_name: cfgForm.from_name || null,
         reply_to_email: cfgForm.reply_to_email || null,
+        signature: cfgForm.signature || null,
         test_mode_enabled: cfgForm.test_mode_enabled,
       });
       setCfg(saved);
@@ -229,6 +232,20 @@ export default function EmailSettingsPanel() {
                   onChange={(e) => setCfgForm((f) => ({ ...f, reply_to_email: e.target.value }))}
                   placeholder="replies@yourdomain.com (optional)"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="cfg-signature">Email Signature</Label>
+                <Textarea
+                  id="cfg-signature"
+                  value={cfgForm.signature}
+                  onChange={(e) => setCfgForm((f) => ({ ...f, signature: e.target.value }))}
+                  placeholder={"— Your Name\n555-867-5309\nyou@yourdomain.com"}
+                  className="min-h-[100px] font-mono text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Appended after a separator (--) at the bottom of every outbound email. Use plain text — line breaks are preserved.
+                </p>
               </div>
 
               {/* Test mode toggle */}
