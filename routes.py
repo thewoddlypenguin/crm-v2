@@ -396,16 +396,23 @@ def forgot_password(request: Request, req: ForgotPasswordRequest, db: Session = 
             f"If you didn't request this, you can ignore this email — your password won't change."
         )
 
-        # Use the user's own email settings if configured, otherwise send unconfigured
-        # (will simulate if test mode or no provider set)
+        # System email — always send live via Resend regardless of user's test mode setting.
+        # Uses RESEND_API_KEY + RESET_FROM_EMAIL env vars (falls back to user's from_email if set).
         cfg_row = db.query(EmailSettings).filter(EmailSettings.owner_user_id == user.id).first()
+        from_email = (
+            os.environ.get("RESET_FROM_EMAIL")
+            or (cfg_row.from_email if cfg_row else None)
+            or os.environ.get("DEFAULT_FROM_EMAIL")
+        )
+        from_name = (cfg_row.from_name if cfg_row else None) or "Leverage CRM"
+
         email_cfg = EmailConfig(
-            provider=cfg_row.provider if cfg_row else None,
-            from_email=cfg_row.from_email if cfg_row else os.environ.get("RESET_FROM_EMAIL"),
-            from_name=cfg_row.from_name if cfg_row else "Leverage CRM",
+            provider="resend",
+            from_email=from_email,
+            from_name=from_name,
             reply_to_email=None,
-            signature=None,  # No signature on system emails
-            test_mode_enabled=cfg_row.test_mode_enabled if cfg_row else False,
+            signature=None,
+            test_mode_enabled=False,  # always deliver system emails
         )
 
         send_email(
