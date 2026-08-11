@@ -70,6 +70,20 @@ export async function getMe(): Promise<{ id: string; email: string; full_name: s
   return request("/auth/me");
 }
 
+export async function forgotPassword(email: string): Promise<{ message: string }> {
+  return request("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function resetPassword(token: string, new_password: string): Promise<{ message: string }> {
+  return request("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password }),
+  });
+}
+
 // ─── Segments ────────────────────────────────────────────────────────────
 
 export async function listSegments(include_inactive = false): Promise<SegmentOption[]> {

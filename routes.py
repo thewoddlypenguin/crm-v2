@@ -27,7 +27,7 @@ from auth import (
 from limiter import limiter
 from business import apply_status_transition, compute_next_follow_up, recalculate_scores
 from db import get_db
-from models import Activity, EmailSettings, EmailTemplate, GmailConnection, Notification, OAuthState, SyncedEmail, Lead, User, Segment, Organization, OrganizationMember
+from models import Activity, EmailSettings, EmailTemplate, GmailConnection, Notification, OAuthState, PasswordResetToken, SyncedEmail, Lead, User, Segment, Organization, OrganizationMember
 
 api = APIRouter()
 logger = logging.getLogger(__name__)
@@ -58,6 +58,15 @@ class LoginRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     user: dict
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=10)
 
 
 class LeadCreate(BaseModel):
@@ -346,6 +355,95 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
 @api.get("/auth/me")
 def get_me(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "email": current_user.email, "full_name": current_user.full_name}
+
+
+@api.post("/auth/forgot-password", status_code=200)
+@limiter.limit("5/minute")
+def forgot_password(request: Request, req: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Generate a password reset token and email a reset link.
+    Always returns 200 — never reveals whether the email exists (prevents enumeration).
+    """
+    import secrets
+    from email_service import EmailConfig, EmailPayload, send_email
+
+    user = db.query(User).filter(User.email == req.email).first()
+    if user:
+        # Invalidate any existing unused tokens for this user
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used == False,
+        ).update({"used": True})
+
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(hours=1)
+        reset_token = PasswordResetToken(
+            user_id=user.id,
+            token=token,
+            expires_at=expires_at,
+        )
+        db.add(reset_token)
+        db.commit()
+
+        frontend_url = os.environ.get("FRONTEND_URL", "https://crm.justinmikkelsen.com").rstrip("/")
+        reset_link = f"{frontend_url}/reset-password?token={token}"
+
+        body = (
+            f"Hi{' ' + user.full_name if user.full_name else ''},\n\n"
+            f"We received a request to reset your Leverage CRM password.\n\n"
+            f"Click the link below to set a new password. This link expires in 1 hour.\n\n"
+            f"{reset_link}\n\n"
+            f"If you didn't request this, you can ignore this email — your password won't change."
+        )
+
+        # Use the user's own email settings if configured, otherwise send unconfigured
+        # (will simulate if test mode or no provider set)
+        cfg_row = db.query(EmailSettings).filter(EmailSettings.owner_user_id == user.id).first()
+        email_cfg = EmailConfig(
+            provider=cfg_row.provider if cfg_row else None,
+            from_email=cfg_row.from_email if cfg_row else os.environ.get("RESET_FROM_EMAIL"),
+            from_name=cfg_row.from_name if cfg_row else "Leverage CRM",
+            reply_to_email=None,
+            signature=None,  # No signature on system emails
+            test_mode_enabled=cfg_row.test_mode_enabled if cfg_row else False,
+        )
+
+        send_email(
+            EmailPayload(
+                to_address=user.email,
+                subject="Reset your Leverage CRM password",
+                body=body,
+            ),
+            config=email_cfg,
+        )
+
+        logger.info("Password reset email sent | user_id=%s", user.id)
+
+    return {"message": "If that email is registered, a reset link has been sent."}
+
+
+@api.post("/auth/reset-password", status_code=200)
+@limiter.limit("10/minute")
+def reset_password(request: Request, req: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Validate a reset token and update the user's password."""
+    reset_token = db.query(PasswordResetToken).filter(
+        PasswordResetToken.token == req.token,
+        PasswordResetToken.used == False,
+    ).first()
+
+    if not reset_token or reset_token.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Reset link is invalid or has expired.")
+
+    user = db.query(User).filter(User.id == reset_token.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Reset link is invalid or has expired.")
+
+    user.password_hash = hash_password(req.new_password)
+    reset_token.used = True
+    db.commit()
+
+    logger.info("Password reset completed | user_id=%s", user.id)
+    return {"message": "Password updated. You can now sign in."}
 
 
 # ─── Segments ───────────────────────────────────────────────────────────────
