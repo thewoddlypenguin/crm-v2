@@ -219,7 +219,7 @@ export default function LeadDetailPage() {
       .replace(/\{\{lead_email\}\}/g, lead.email || "")
       .replace(/\{\{lead_phone\}\}/g, lead.phone || "")
       .replace(/\{\{my_name\}\}/g, s?.from_name || "")
-      .replace(/\{\{my_email\}\}/g, s?.from_email || "")
+      .replace(/\{\{my_email\}\}/g, s?.reply_to_email || s?.from_email || "")
       .replace(/\{\{my_phone\}\}/g, s?.phone || "");
   };
 
