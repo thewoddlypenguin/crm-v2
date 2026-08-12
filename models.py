@@ -130,6 +130,7 @@ class EmailSettings(Base):
     from_email = Column(String, nullable=True)
     from_name = Column(String, nullable=True)
     reply_to_email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)             # used in {{my_phone}} template variable
 
     # Signature appended to every outbound email
     signature = Column(Text, nullable=True)

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { CONTACT_PATHS, STATUSES, STATUS_LABELS } from "../types";
-import type { Activity, ContactPath, EmailTemplate, Lead, LeadStatus, SegmentOption } from "../types";
+import type { Activity, ContactPath, EmailSettings, EmailTemplate, Lead, LeadStatus, SegmentOption } from "../types";
 import * as api from "../api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +48,8 @@ export default function LeadDetailPage() {
 
   // Email templates
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+  // Sender's email settings (for {{my_*}} variable substitution)
+  const [myEmailSettings, setMyEmailSettings] = useState<EmailSettings | null>(null);
 
   // Tab navigation for view mode
   type ViewTab = "contact" | "business" | "notes" | "email" | "history";
@@ -105,16 +107,18 @@ export default function LeadDetailPage() {
       }
 
       try {
-        const [leadData, segmentOptions, activityData, templateData] = await Promise.all([
+        const [leadData, segmentOptions, activityData, templateData, emailSettingsData] = await Promise.all([
           api.getLead(id),
           api.listSegments(),
           api.listActivities(id),
           api.listEmailTemplates(),
+          api.getEmailSettings(),
         ]);
 
         if (cancelled) return;
 
         setTemplates(templateData);
+        setMyEmailSettings(emailSettingsData);
         setActivities(activityData);
         setLead(leadData);
         setSegments(segmentOptions);
@@ -202,6 +206,21 @@ export default function LeadDetailPage() {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const applyTemplateVars = (text: string): string => {
+    if (!lead) return text;
+    const s = myEmailSettings;
+    return text
+      .replace(/\{\{lead_name\}\}/g, lead.full_name || "")
+      .replace(/\{\{lead_first_name\}\}/g, lead.first_name || "")
+      .replace(/\{\{lead_last_name\}\}/g, lead.last_name || "")
+      .replace(/\{\{lead_business\}\}/g, lead.business_name || "")
+      .replace(/\{\{lead_email\}\}/g, lead.email || "")
+      .replace(/\{\{lead_phone\}\}/g, lead.phone || "")
+      .replace(/\{\{my_name\}\}/g, s?.from_name || "")
+      .replace(/\{\{my_email\}\}/g, s?.from_email || "")
+      .replace(/\{\{my_phone\}\}/g, s?.phone || "");
   };
 
   const handleStatusChange = async (newStatus: LeadStatus) => {
@@ -776,8 +795,8 @@ export default function LeadDetailPage() {
                     onValueChange={(tid) => {
                       const tpl = templates.find((t) => t.id === tid);
                       if (tpl) {
-                        setEmailSubject(tpl.subject);
-                        setEmailBody(tpl.body);
+                        setEmailSubject(applyTemplateVars(tpl.subject));
+                        setEmailBody(applyTemplateVars(tpl.body));
                         setEmailSuccess(null);
                       }
                     }}
@@ -791,6 +810,22 @@ export default function LeadDetailPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {[
+                      "{{lead_name}}", "{{lead_first_name}}", "{{lead_business}}",
+                      "{{lead_email}}", "{{lead_phone}}",
+                      "{{my_name}}", "{{my_email}}", "{{my_phone}}",
+                    ].map((v) => (
+                      <code
+                        key={v}
+                        className="cursor-pointer rounded bg-muted px-1.5 py-0.5 text-[11px] text-primary hover:bg-primary/10"
+                        title="Click to insert"
+                        onClick={() => setEmailBody((b) => b + v)}
+                      >
+                        {v}
+                      </code>
+                    ))}
+                  </div>
                 </div>
               )}
               <div className="space-y-2">

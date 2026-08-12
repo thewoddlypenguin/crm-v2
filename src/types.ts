@@ -140,6 +140,7 @@ export interface EmailSettings {
   from_email: string | null;
   from_name: string | null;
   reply_to_email: string | null;
+  phone: string | null;
   signature: string | null;
   test_mode_enabled: boolean;
   updated_at: string | null;

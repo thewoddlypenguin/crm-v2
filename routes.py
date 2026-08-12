@@ -195,6 +195,7 @@ class EmailSettingsUpdate(BaseModel):
     from_email: Optional[str] = None
     from_name: Optional[str] = None
     reply_to_email: Optional[str] = None
+    phone: Optional[str] = None
     signature: Optional[str] = None
     test_mode_enabled: Optional[bool] = None
 
@@ -284,6 +285,7 @@ def email_settings_to_dict(s: EmailSettings) -> dict:
         "from_email": s.from_email,
         "from_name": s.from_name,
         "reply_to_email": s.reply_to_email,
+        "phone": s.phone,
         "signature": s.signature,
         "test_mode_enabled": s.test_mode_enabled,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
@@ -861,7 +863,7 @@ def get_email_settings(current_user: User = Depends(get_current_user), db: Sessi
     s = db.query(EmailSettings).filter(EmailSettings.owner_user_id == current_user.id).first()
     if not s:
         return {"id": None, "provider": None, "from_email": None, "from_name": None,
-                "reply_to_email": None, "signature": None, "test_mode_enabled": True, "updated_at": None}
+                "reply_to_email": None, "phone": None, "signature": None, "test_mode_enabled": True, "updated_at": None}
     return email_settings_to_dict(s)
 
 
@@ -880,6 +882,8 @@ def upsert_email_settings(req: EmailSettingsUpdate, current_user: User = Depends
         s.from_name = req.from_name or None
     if req.reply_to_email is not None:
         s.reply_to_email = req.reply_to_email or None
+    if req.phone is not None:
+        s.phone = req.phone or None
     if req.signature is not None:
         s.signature = req.signature or None
     if req.test_mode_enabled is not None:

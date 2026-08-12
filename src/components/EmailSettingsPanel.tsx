@@ -40,6 +40,7 @@ export default function EmailSettingsPanel() {
     from_email: "",
     from_name: "",
     reply_to_email: "",
+    phone: "",
     signature: "",
     test_mode_enabled: true,
   });
@@ -68,6 +69,7 @@ export default function EmailSettingsPanel() {
         from_email: s.from_email ?? "",
         from_name: s.from_name ?? "",
         reply_to_email: s.reply_to_email ?? "",
+        phone: s.phone ?? "",
         signature: s.signature ?? "",
         test_mode_enabled: s.test_mode_enabled,
       });
@@ -103,6 +105,7 @@ export default function EmailSettingsPanel() {
         from_email: cfgForm.from_email || null,
         from_name: cfgForm.from_name || null,
         reply_to_email: cfgForm.reply_to_email || null,
+        phone: cfgForm.phone || null,
         signature: cfgForm.signature || null,
         test_mode_enabled: cfgForm.test_mode_enabled,
       });
@@ -223,15 +226,45 @@ export default function EmailSettingsPanel() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="cfg-reply-to">Reply-To Email</Label>
-                <Input
-                  id="cfg-reply-to"
-                  type="email"
-                  value={cfgForm.reply_to_email}
-                  onChange={(e) => setCfgForm((f) => ({ ...f, reply_to_email: e.target.value }))}
-                  placeholder="replies@yourdomain.com (optional)"
-                />
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="cfg-reply-to">Reply-To Email</Label>
+                  <Input
+                    id="cfg-reply-to"
+                    type="email"
+                    value={cfgForm.reply_to_email}
+                    onChange={(e) => setCfgForm((f) => ({ ...f, reply_to_email: e.target.value }))}
+                    placeholder="replies@yourdomain.com (optional)"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cfg-phone">Your Phone Number</Label>
+                  <Input
+                    id="cfg-phone"
+                    type="tel"
+                    value={cfgForm.phone}
+                    onChange={(e) => setCfgForm((f) => ({ ...f, phone: e.target.value }))}
+                    placeholder="503-555-0100 (used in {{my_phone}})"
+                  />
+                </div>
+              </div>
+
+              {/* Template variable reference */}
+              <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                <p className="text-xs font-semibold text-foreground">Template variables</p>
+                <p className="text-xs text-muted-foreground">Use these in email templates and signatures. They are replaced automatically when a template is applied.</p>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                  <div><code className="text-primary">{"{{my_name}}"}</code> — your display name</div>
+                  <div><code className="text-primary">{"{{lead_name}}"}</code> — lead's full name</div>
+                  <div><code className="text-primary">{"{{my_email}}"}</code> — your email address</div>
+                  <div><code className="text-primary">{"{{lead_first_name}}"}</code> — lead's first name</div>
+                  <div><code className="text-primary">{"{{my_phone}}"}</code> — your phone number</div>
+                  <div><code className="text-primary">{"{{lead_business}}"}</code> — lead's business name</div>
+                  <div></div>
+                  <div><code className="text-primary">{"{{lead_email}}"}</code> — lead's email</div>
+                  <div></div>
+                  <div><code className="text-primary">{"{{lead_phone}}"}</code> — lead's phone</div>
+                </div>
               </div>
 
               <div className="space-y-2">
