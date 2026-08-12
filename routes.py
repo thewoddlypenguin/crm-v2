@@ -397,8 +397,18 @@ def forgot_password(request: Request, req: ForgotPasswordRequest, db: Session = 
         )
 
         # System email — always send live via Resend regardless of user's test mode setting.
-        # Uses RESEND_API_KEY + RESET_FROM_EMAIL env vars (falls back to user's from_email if set).
+        # Use the requesting user's email settings if available; fall back to the org
+        # owner's settings (the member who has Resend configured).
         cfg_row = db.query(EmailSettings).filter(EmailSettings.owner_user_id == user.id).first()
+        if not cfg_row or not cfg_row.from_email:
+            owner_member = db.query(OrganizationMember).filter(
+                OrganizationMember.role == "owner"
+            ).first()
+            if owner_member:
+                cfg_row = db.query(EmailSettings).filter(
+                    EmailSettings.owner_user_id == owner_member.user_id
+                ).first()
+
         from_email = (
             os.environ.get("RESET_FROM_EMAIL")
             or (cfg_row.from_email if cfg_row else None)
