@@ -21,6 +21,7 @@ export type ActivityType =
   | "NOTE"
   | "STATUS_CHANGE"
   | "OUTREACH_SENT"
+  | "TEST_EMAIL_SENT"
   | "FOLLOW_UP_SENT"
   | "REPLY_RECEIVED"
   | "CALL_BOOKED"

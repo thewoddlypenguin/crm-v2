@@ -200,8 +200,35 @@ export async function deleteActivity(leadId: string, activityId: string): Promis
 // ─── Email ────────────────────────────────────────────────────────────────
 
 /** Send an email to a lead. Returns the logged OUTREACH_SENT activity (+ simulated flag) on success. */
-export async function sendLeadEmail(leadId: string, data: EmailSendRequest): Promise<Activity & { simulated?: boolean }> {
+export async function sendLeadEmail(leadId: string, data: EmailSendRequest): Promise<Activity & { simulated?: boolean; missing_variables?: string[] }> {
   return request(`/leads/${leadId}/email`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ─── Variable rendering preview ───────────────────────────────────────────
+
+export interface EmailRenderPreviewRequest {
+  subject?: string;
+  body?: string;
+  signature?: string;
+  lead_id?: string;
+  use_sample_lead?: boolean;
+}
+
+export interface EmailRenderPreview {
+  subject: string;
+  body: string;
+  signature: string | null;
+  used_variables: string[];
+  missing_variables: string[];
+  unknown_variables: string[];
+}
+
+/** Render template variables exactly as the send route will. Never sends. */
+export async function renderEmailPreview(data: EmailRenderPreviewRequest): Promise<EmailRenderPreview> {
+  return request("/email/render-preview", {
     method: "POST",
     body: JSON.stringify(data),
   });

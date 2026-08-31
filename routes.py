@@ -789,7 +789,7 @@ def bulk_segment_change(req: BulkSegmentChange, org: OrgContext = Depends(get_cu
 
 # ─── Activities ──────────────────────────────────────────────────────────────
 
-VALID_ACTIVITY_TYPES = {"NOTE", "STATUS_CHANGE", "OUTREACH_SENT", "FOLLOW_UP_SENT", "REPLY_RECEIVED", "CALL_BOOKED", "OTHER"}
+VALID_ACTIVITY_TYPES = {"NOTE", "STATUS_CHANGE", "OUTREACH_SENT", "TEST_EMAIL_SENT", "FOLLOW_UP_SENT", "REPLY_RECEIVED", "CALL_BOOKED", "OTHER"}
 
 
 @api.get("/leads/{lead_id}/activities")
@@ -893,6 +893,78 @@ def upsert_email_settings(req: EmailSettingsUpdate, current_user: User = Depends
     return email_settings_to_dict(s)
 
 
+# ─── Variable Rendering Preview ──────────────────────────────────────────────
+
+class EmailRenderPreviewRequest(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    signature: Optional[str] = None
+    lead_id: Optional[str] = None            # render against a real lead's context
+    use_sample_lead: bool = True             # when no lead_id: fill lead vars with sample data
+
+
+@api.post("/email/render-preview")
+def render_email_preview(
+    req: EmailRenderPreviewRequest,
+    org: OrgContext = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    """
+    Render template variables in subject/body/signature exactly as the send
+    route will, and report which variables are unsupported or resolved empty.
+
+    Used by the composer/template editor for live previews and by the variable
+    picker to validate content before sending. Never sends anything.
+    """
+    from email_variables import (  # deferred import
+        SAMPLE_LEAD_CONTEXT,
+        VariableContext,
+        build_context,
+        render_variables,
+        sender_context_from_settings,
+        supported_variables_help,
+    )
+
+    cfg = db.query(EmailSettings).filter(EmailSettings.owner_user_id == org.user_id).first()
+
+    lead = None
+    if req.lead_id:
+        lead = db.query(Lead).filter(
+            Lead.id == req.lead_id, Lead.organization_id == org.id
+        ).first()
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+    if lead is not None:
+        ctx = build_context(settings=cfg, lead=lead)
+    elif req.use_sample_lead:
+        sender = sender_context_from_settings(cfg)
+        ctx = VariableContext(**{**sender, **SAMPLE_LEAD_CONTEXT})
+    else:
+        ctx = build_context(settings=cfg, lead=None)
+
+    result: dict = {"subject": "", "body": "", "signature": None,
+                    "used_variables": [], "missing_variables": [], "unknown_variables": []}
+    used: set[str] = set()
+    missing: set[str] = set()
+    unknown: set[str] = set()
+
+    for field_name in ("subject", "body", "signature"):
+        text = getattr(req, field_name)
+        if text is None:
+            continue
+        r = render_variables(text, ctx)
+        result[field_name] = r.text
+        used.update(r.used_variables)
+        missing.update(r.missing_variables)
+        unknown.update(r.unknown_variables)
+
+    result["used_variables"] = sorted(used)
+    result["missing_variables"] = sorted(missing)
+    result["unknown_variables"] = sorted(unknown)
+    return result
+
+
 # ─── Email Templates ─────────────────────────────────────────────────────────
 
 @api.get("/email-templates")
@@ -984,6 +1056,9 @@ def send_lead_email(
             detail="This lead is marked Do Not Contact. Email send blocked.",
         )
 
+
+    from email_variables import supported_variables_help  # deferred import
+
     recipient = req.to_address or lead.email
     if not recipient:
         raise HTTPException(status_code=400, detail="No recipient address — set to_address or add an email to the lead")
@@ -992,21 +1067,53 @@ def send_lead_email(
     cfg = db.query(EmailSettings).filter(EmailSettings.owner_user_id == org.user_id).first()
 
     from email_service import EmailConfig, EmailPayload, send_email  # deferred import
+    from email_variables import build_context, render_variables, supported_variables_help
+
+    # ── Authoritative variable rendering (backend is the single source of truth) ──
+    # Applied to subject AND body regardless of how content was composed
+    # (manually typed, from a saved template, or with the variable picker).
+    ctx = build_context(settings=cfg, lead=lead)
+    rendered_subject = render_variables(req.subject, ctx)
+    rendered_body = render_variables(req.body, ctx)
+
+    # Reject unsupported variables — they would ship literal {{tokens}} to the
+    # provider. Strict allowlist; nothing dynamic is ever evaluated.
+    unknown_all = rendered_subject.unknown_variables + rendered_body.unknown_variables
+    if unknown_all:
+        logger.warning(
+            "Email send rejected: unsupported variables | lead_id=%s user_id=%s unknown=%s",
+            lead.id, org.user_id, unknown_all,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported template variable(s): "
+                f"{', '.join('{{ ' + v + ' }}' for v in sorted(set(unknown_all)))}. "
+                f"Supported: {supported_variables_help()}. "
+                "Use the 'Insert variable' picker to add valid ones."
+            ),
+        )
+
+    # Warn (don't block) when a supported variable resolved to empty — e.g.
+    # {{lead_phone}} used but the lead has no phone on file.
+    empty_warnings = sorted(set(rendered_subject.missing_variables) | set(rendered_body.missing_variables))
 
     email_cfg = EmailConfig(
         provider=cfg.provider if cfg else None,
         from_email=cfg.from_email if cfg else None,
         from_name=cfg.from_name if cfg else None,
         reply_to_email=cfg.reply_to_email if cfg else None,
-        signature=cfg.signature if cfg else None,
+        # Render the signature with the same full context (sender + lead) so
+        # variables in signatures resolve per-lead; send_email only appends it.
+        signature=render_variables(cfg.signature, ctx).text if (cfg and cfg.signature) else None,
         test_mode_enabled=cfg.test_mode_enabled if cfg else True,
     )
 
     try:
         result = send_email(EmailPayload(
             to_address=recipient,
-            subject=req.subject,
-            body=req.body,
+            subject=rendered_subject.text,
+            body=rendered_body.text,
         ), config=email_cfg)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Email error: {exc}")
@@ -1014,17 +1121,32 @@ def send_lead_email(
     if not result.success:
         raise HTTPException(status_code=502, detail=result.error or "Email send failed")
 
-    # Log the send as an activity — prefix body when in test mode
-    activity_body = (
-        f"[TEST MODE — not delivered]\nSubject: {req.subject}\n\n{req.body}"
-        if result.simulated
-        else f"Subject: {req.subject}\n\n{req.body}"
-    )
+    # Log the send as an activity — ONLY after the provider confirmed success.
+    # The log stores the RENDERED content (exactly what the provider received),
+    # the recipient address, the sending user, and the server-side timestamp.
+    # Test-mode (simulated) sends get their own activity type so they are never
+    # mistaken for real outreach; the body keeps an explicit banner as well.
+    rendered_body_text = rendered_body.text
+    if result.simulated:
+        activity_body = (
+            f"[TEST MODE — not delivered]\n"
+            f"To: {recipient}\n"
+            f"Subject: {rendered_subject.text}\n\n"
+            f"{rendered_body_text}"
+        )
+        activity_type = "TEST_EMAIL_SENT"
+    else:
+        activity_body = (
+            f"To: {recipient}\n"
+            f"Subject: {rendered_subject.text}\n\n"
+            f"{rendered_body_text}"
+        )
+        activity_type = "OUTREACH_SENT"
     activity = Activity(
         lead_id=lead.id,
         user_id=org.user_id,
         organization_id=org.id,
-        activity_type="OUTREACH_SENT",
+        activity_type=activity_type,
         body=activity_body,
         occurred_at=datetime.utcnow(),
     )
@@ -1033,6 +1155,8 @@ def send_lead_email(
     db.refresh(activity)
     resp = activity_to_dict(activity)
     resp["simulated"] = result.simulated  # surface to frontend
+    if empty_warnings:
+        resp["missing_variables"] = empty_warnings  # e.g. ["lead_phone"] → blank in message
     return resp
 
 

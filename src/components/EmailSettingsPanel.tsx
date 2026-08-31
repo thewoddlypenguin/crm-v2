@@ -1,7 +1,7 @@
 /**
  * EmailSettingsPanel — Email provider config + template management.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as api from "../api";
 import type { EmailSettings, EmailTemplate } from "../types";
 import { EMAIL_PROVIDERS } from "../types";
@@ -23,11 +23,20 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import VariablePicker from "@/components/VariablePicker";
+import { LEAD_VARIABLES, SENDER_VARIABLES } from "@/lib/emailVariables";
 
 export default function EmailSettingsPanel() {
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Refs for cursor-positioned variable insertion
+  const signatureRef = useRef<HTMLTextAreaElement>(null);
+  const tplSubjectRef = useRef<HTMLInputElement>(null);
+  const tplBodyRef = useRef<HTMLTextAreaElement>(null);
+  const editSubjectRef = useRef<HTMLInputElement>(null);
+  const editBodyRef = useRef<HTMLTextAreaElement>(null);
 
   // Provider config state
   const [cfg, setCfg] = useState<EmailSettings | null>(null);
@@ -249,35 +258,47 @@ export default function EmailSettingsPanel() {
                 </div>
               </div>
 
-              {/* Template variable reference */}
+              {/* Template variable reference (matches backend allowlist) */}
               <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
                 <p className="text-xs font-semibold text-foreground">Template variables</p>
-                <p className="text-xs text-muted-foreground">Use these in email templates and signatures. They are replaced automatically when a template is applied.</p>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-                  <div><code className="text-primary">{"{{my_name}}"}</code> — your display name</div>
-                  <div><code className="text-primary">{"{{lead_name}}"}</code> — lead's full name</div>
-                  <div><code className="text-primary">{"{{my_email}}"}</code> — your email address</div>
-                  <div><code className="text-primary">{"{{lead_first_name}}"}</code> — lead's first name</div>
-                  <div><code className="text-primary">{"{{my_phone}}"}</code> — your phone number</div>
-                  <div><code className="text-primary">{"{{lead_business}}"}</code> — lead's business name</div>
-                  <div></div>
-                  <div><code className="text-primary">{"{{lead_email}}"}</code> — lead's email</div>
-                  <div></div>
-                  <div><code className="text-primary">{"{{lead_phone}}"}</code> — lead's phone</div>
+                <p className="text-xs text-muted-foreground">
+                  Use these in email templates and signatures. They are rendered on the server for each lead when the email is sent — missing values are replaced with blank text.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                  <div className="font-semibold text-muted-foreground sm:col-span-2">Sender variables</div>
+                  {SENDER_VARIABLES.map((v) => (
+                    <div key={v.name}><code className="text-primary">{v.token}</code> — {v.description}</div>
+                  ))}
+                  <div className="font-semibold text-muted-foreground sm:col-span-2 mt-1">Lead variables</div>
+                  {LEAD_VARIABLES.map((v) => (
+                    <div key={v.name}><code className="text-primary">{v.token}</code> — {v.description}</div>
+                  ))}
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="cfg-signature">Email Signature</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="cfg-signature">Email Signature</Label>
+                  <VariablePicker
+                    targetRef={signatureRef}
+                    value={cfgForm.signature}
+                    onInsert={(newValue, caret) => {
+                      setCfgForm((f) => ({ ...f, signature: newValue }));
+                      requestAnimationFrame(() => signatureRef.current?.setSelectionRange(caret, caret));
+                    }}
+                    label="Insert variable"
+                  />
+                </div>
                 <Textarea
                   id="cfg-signature"
+                  ref={signatureRef}
                   value={cfgForm.signature}
                   onChange={(e) => setCfgForm((f) => ({ ...f, signature: e.target.value }))}
-                  placeholder={"— Your Name\n555-867-5309\nyou@yourdomain.com"}
+                  placeholder={"Hi {{lead_first_name}},\n\n— {{my_name}}\n{{my_phone}}\n{{my_email}}"}
                   className="min-h-[100px] font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Appended after a separator (--) at the bottom of every outbound email. Use plain text — line breaks are preserved.
+                  Appended after a separator (--) at the bottom of every outbound email. Use plain text — line breaks are preserved. Variables are rendered per-lead at send time.
                 </p>
               </div>
 
@@ -325,12 +346,34 @@ export default function EmailSettingsPanel() {
               <Input id="tpl-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Initial outreach" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="tpl-subject">Subject</Label>
-              <Input id="tpl-subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Quick question about your business" />
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="tpl-subject">Subject</Label>
+                <VariablePicker
+                  targetRef={tplSubjectRef}
+                  value={subject}
+                  onInsert={(newValue, caret) => {
+                    setSubject(newValue);
+                    requestAnimationFrame(() => tplSubjectRef.current?.setSelectionRange(caret, caret));
+                  }}
+                  label="Insert variable"
+                />
+              </div>
+              <Input id="tpl-subject" ref={tplSubjectRef} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Quick question about {{lead_business}}" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="tpl-body">Body</Label>
-              <Textarea id="tpl-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Hi {{name}},..." className="min-h-[100px]" />
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="tpl-body">Body</Label>
+                <VariablePicker
+                  targetRef={tplBodyRef}
+                  value={body}
+                  onInsert={(newValue, caret) => {
+                    setBody(newValue);
+                    requestAnimationFrame(() => tplBodyRef.current?.setSelectionRange(caret, caret));
+                  }}
+                  label="Insert variable"
+                />
+              </div>
+              <Textarea id="tpl-body" ref={tplBodyRef} value={body} onChange={(e) => setBody(e.target.value)} placeholder={"Hi {{lead_first_name}},\n\n..."} className="min-h-[100px]" />
             </div>
             <Button type="submit" disabled={creating || !name.trim() || !subject.trim() || !body.trim()}>
               {creating ? "Creating..." : "Create template"}
@@ -351,8 +394,30 @@ export default function EmailSettingsPanel() {
                   editingId === t.id ? (
                     <li key={t.id} className="rounded-lg border border-border bg-background p-3 space-y-3">
                       <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Name" />
-                      <Input value={editSubject} onChange={(e) => setEditSubject(e.target.value)} placeholder="Subject" />
-                      <Textarea value={editBody} onChange={(e) => setEditBody(e.target.value)} className="min-h-[80px]" />
+                      <div className="flex items-center justify-between gap-2">
+                        <Input value={editSubject} ref={editSubjectRef} onChange={(e) => setEditSubject(e.target.value)} placeholder="Subject" className="flex-1" />
+                        <VariablePicker
+                          targetRef={editSubjectRef}
+                          value={editSubject}
+                          onInsert={(newValue, caret) => {
+                            setEditSubject(newValue);
+                            requestAnimationFrame(() => editSubjectRef.current?.setSelectionRange(caret, caret));
+                          }}
+                          label="Insert variable"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <Textarea value={editBody} ref={editBodyRef} onChange={(e) => setEditBody(e.target.value)} className="min-h-[80px] flex-1" />
+                        <VariablePicker
+                          targetRef={editBodyRef}
+                          value={editBody}
+                          onInsert={(newValue, caret) => {
+                            setEditBody(newValue);
+                            requestAnimationFrame(() => editBodyRef.current?.setSelectionRange(caret, caret));
+                          }}
+                          label="Insert variable"
+                        />
+                      </div>
                       <div className="flex gap-2">
                         <Button size="sm" onClick={() => handleSaveEdit(t.id)} disabled={editSaving}>
                           {editSaving ? "Saving..." : "Save"}

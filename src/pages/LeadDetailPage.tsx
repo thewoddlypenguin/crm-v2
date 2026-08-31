@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { CONTACT_PATHS, STATUSES, STATUS_LABELS } from "../types";
 import type { Activity, ContactPath, EmailSettings, EmailTemplate, Lead, LeadStatus, SegmentOption } from "../types";
@@ -15,8 +15,96 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import VariablePicker from "@/components/VariablePicker";
+import { findUnknownVariables } from "@/lib/emailVariables";
+import { ChevronDown, ChevronUp, Mail, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+
+// Renders a sent-email activity entry as a distinct card: envelope icon,
+// To/Subject headers, body (collapsed with expand toggle), sent time.
+// Used for both real sends (OUTREACH_SENT) and test sends (TEST_EMAIL_SENT).
+function EmailActivityEntry({ activity }: { activity: Activity }) {
+  const [expanded, setExpanded] = useState(false);
+
+  let text = activity.body ?? "";
+  let testMode = activity.activity_type === "TEST_EMAIL_SENT";
+  if (text.startsWith("[TEST MODE")) {
+    testMode = true;
+    text = text.split("\n").slice(1).join("\n");
+  }
+  let to: string | null = null;
+  let subject: string | null = null;
+  const lines = text.split("\n");
+  const bodyLines: string[] = [];
+  let pastHeaders = false;
+  for (const line of lines) {
+    if (!pastHeaders && line.startsWith("To: ")) {
+      to = line.slice(4).trim();
+    } else if (!pastHeaders && line.startsWith("Subject: ")) {
+      subject = line.slice(9).trim();
+    } else if (!pastHeaders && line.trim() === "") {
+      pastHeaders = true; // blank line ends the header block
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  const body = bodyLines.join("\n");
+  const isLong = body.split("\n").length > 3 || body.length > 220;
+
+  return (
+    <div
+      className={`rounded-md border p-3 ${
+        testMode
+          ? "border-dashed border-amber-500/50 bg-amber-500/5"
+          : "border-primary/30 bg-primary/5"
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <Mail className={`h-3.5 w-3.5 ${testMode ? "text-amber-600" : "text-primary"}`} />
+        <span className={`text-xs font-medium ${testMode ? "text-amber-700 dark:text-amber-400" : "text-primary"}`}>
+          {testMode ? "Test Email — Not Delivered" : "Email Sent"}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {activity.occurred_at
+            ? formatDistanceToNow(new Date(activity.occurred_at), { addSuffix: true })
+            : ""}
+        </span>
+      </div>
+      <div className="space-y-1 text-xs">
+        {to && (
+          <div>
+            <span className="text-muted-foreground">To: </span>
+            <span className="font-medium text-foreground">{to}</span>
+          </div>
+        )}
+        {subject && (
+          <div>
+            <span className="text-muted-foreground">Subject: </span>
+            <span className="font-medium text-foreground">{subject}</span>
+          </div>
+        )}
+      </div>
+      {body && (
+        <div className="mt-2">
+          <p
+            className={`text-xs text-muted-foreground whitespace-pre-wrap ${expanded ? "" : "line-clamp-3"}`}
+          >
+            {body}
+          </p>
+          {isLong ? (
+            <button
+              type="button"
+              className="mt-1 text-xs text-primary hover:underline"
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? "Show less" : "Show full email"}
+            </button>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -208,20 +296,12 @@ export default function LeadDetailPage() {
     }
   };
 
-  const applyTemplateVars = (text: string): string => {
-    if (!lead) return text;
-    const s = myEmailSettings;
-    return text
-      .replace(/\{\{lead_name\}\}/g, lead.full_name || "")
-      .replace(/\{\{lead_first_name\}\}/g, lead.first_name || "")
-      .replace(/\{\{lead_last_name\}\}/g, lead.last_name || "")
-      .replace(/\{\{lead_business\}\}/g, lead.business_name || "")
-      .replace(/\{\{lead_email\}\}/g, lead.email || "")
-      .replace(/\{\{lead_phone\}\}/g, lead.phone || "")
-      .replace(/\{\{my_name\}\}/g, s?.from_name || "")
-      .replace(/\{\{my_email\}\}/g, s?.reply_to_email || s?.from_email || "")
-      .replace(/\{\{my_phone\}\}/g, s?.phone || "");
-  };
+  // Refs for cursor-positioned variable insertion in the composer
+  const subjectInputRef = useRef<HTMLInputElement>(null);
+  const bodyTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Unknown {{tokens}} flagged live (rendered as-is by the backend → rejected at send)
+  const unknownVars = [...findUnknownVariables(emailSubject), ...findUnknownVariables(emailBody)];
 
   const handleStatusChange = async (newStatus: LeadStatus) => {
     if (!id || !lead) return;
@@ -372,6 +452,7 @@ export default function LeadDetailPage() {
     NOTE: "Note",
     STATUS_CHANGE: "Status Change",
     OUTREACH_SENT: "Email Sent",
+    TEST_EMAIL_SENT: "Test Email (Not Delivered)",
     FOLLOW_UP_SENT: "Follow-up Sent",
     REPLY_RECEIVED: "Reply Received",
     CALL_BOOKED: "Call Booked",
@@ -733,18 +814,32 @@ export default function LeadDetailPage() {
                       {activities.slice(0, 5).map((a) => (
                         <li key={a.id} className="ml-4">
                           <span className="absolute -left-1.5 mt-1.5 h-2.5 w-2.5 rounded-full border border-background bg-border" />
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="text-xs font-medium text-foreground">
-                              {ACTIVITY_LABELS[a.activity_type] ?? a.activity_type}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {a.occurred_at
-                                ? formatDistanceToNow(new Date(a.occurred_at), { addSuffix: true })
-                                : ""}
-                            </span>
-                          </div>
-                          {a.body && (
-                            <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-2">{a.body}</p>
+                          {a.activity_type === "OUTREACH_SENT" || a.activity_type === "TEST_EMAIL_SENT" ? (
+                            <div className="flex items-center gap-2">
+                              <Mail className={`h-3 w-3 shrink-0 ${a.activity_type === "TEST_EMAIL_SENT" ? "text-amber-600" : "text-primary"}`} />
+                              <span className={`text-xs font-medium ${a.activity_type === "TEST_EMAIL_SENT" ? "text-amber-700 dark:text-amber-400" : "text-primary"}`}>
+                                {a.activity_type === "TEST_EMAIL_SENT" ? "Test Email — Not Delivered" : "Email Sent"}
+                              </span>
+                              <span className="text-xs text-muted-foreground truncate">
+                                {a.body?.match(/^Subject: (.*)$/m)?.[1] ?? ""}
+                              </span>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-xs font-medium text-foreground">
+                                  {ACTIVITY_LABELS[a.activity_type] ?? a.activity_type}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {a.occurred_at
+                                    ? formatDistanceToNow(new Date(a.occurred_at), { addSuffix: true })
+                                    : ""}
+                                </span>
+                              </div>
+                              {a.body && (
+                                <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-2">{a.body}</p>
+                              )}
+                            </>
                           )}
                         </li>
                       ))}
@@ -795,8 +890,10 @@ export default function LeadDetailPage() {
                     onValueChange={(tid) => {
                       const tpl = templates.find((t) => t.id === tid);
                       if (tpl) {
-                        setEmailSubject(applyTemplateVars(tpl.subject));
-                        setEmailBody(applyTemplateVars(tpl.body));
+                        // Keep {{variables}} raw — the backend renders them
+                        // authoritatively per-lead at send time.
+                        setEmailSubject(tpl.subject);
+                        setEmailBody(tpl.body);
                         setEmailSuccess(null);
                       }
                     }}
@@ -810,37 +907,58 @@ export default function LeadDetailPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <div className="flex flex-wrap gap-1 pt-0.5">
-                    {[
-                      "{{lead_name}}", "{{lead_first_name}}", "{{lead_business}}",
-                      "{{lead_email}}", "{{lead_phone}}",
-                      "{{my_name}}", "{{my_email}}", "{{my_phone}}",
-                    ].map((v) => (
-                      <code
-                        key={v}
-                        className="cursor-pointer rounded bg-muted px-1.5 py-0.5 text-[11px] text-primary hover:bg-primary/10"
-                        title="Click to insert"
-                        onClick={() => setEmailBody((b) => b + v)}
-                      >
-                        {v}
-                      </code>
-                    ))}
-                  </div>
+                </div>
+              )}
+              {unknownVars.length > 0 && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+                  Unsupported variable{unknownVars.length > 1 ? "s" : ""}:{" "}
+                  {unknownVars.map((v, i) => (
+                    <code key={v} className="font-semibold">
+                      {`{{${v}}}`}{i < unknownVars.length - 1 ? ", " : ""}
+                    </code>
+                  ))}{" "}
+                  — the email cannot be sent until removed. Use "Insert variable" for supported ones.
                 </div>
               )}
               <div className="space-y-2">
-                <Label htmlFor="email-subject">Subject</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="email-subject">Subject</Label>
+                  <VariablePicker
+                    targetRef={subjectInputRef}
+                    value={emailSubject}
+                    onInsert={(newValue, caret) => {
+                      setEmailSubject(newValue);
+                      setEmailSuccess(null);
+                      requestAnimationFrame(() => subjectInputRef.current?.setSelectionRange(caret, caret));
+                    }}
+                    label="Insert variable"
+                  />
+                </div>
                 <Input
                   id="email-subject"
+                  ref={subjectInputRef}
                   value={emailSubject}
                   onChange={(e) => { setEmailSubject(e.target.value); setEmailSuccess(null); }}
                   placeholder="Email subject..."
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email-body">Body</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="email-body">Body</Label>
+                  <VariablePicker
+                    targetRef={bodyTextareaRef}
+                    value={emailBody}
+                    onInsert={(newValue, caret) => {
+                      setEmailBody(newValue);
+                      setEmailSuccess(null);
+                      requestAnimationFrame(() => bodyTextareaRef.current?.setSelectionRange(caret, caret));
+                    }}
+                    label="Insert variable"
+                  />
+                </div>
                 <Textarea
                   id="email-body"
+                  ref={bodyTextareaRef}
                   value={emailBody}
                   onChange={(e) => { setEmailBody(e.target.value); setEmailSuccess(null); }}
                   placeholder="Write your email..."
@@ -850,7 +968,7 @@ export default function LeadDetailPage() {
               <Button
                 size="sm"
                 onClick={handleSendEmail}
-                disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || lead.do_not_contact}
+                disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || lead.do_not_contact || unknownVars.length > 0}
               >
                 {emailSending ? "Sending..." : "Send Email"}
               </Button>
@@ -872,18 +990,24 @@ export default function LeadDetailPage() {
                   {activities.map((a) => (
                     <li key={a.id} className="ml-4">
                       <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border border-background bg-border" />
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-xs font-medium text-foreground">
-                          {ACTIVITY_LABELS[a.activity_type] ?? a.activity_type}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {a.occurred_at
-                            ? formatDistanceToNow(new Date(a.occurred_at), { addSuffix: true })
-                            : ""}
-                        </span>
-                      </div>
-                      {a.body && (
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-3">{a.body}</p>
+                      {a.activity_type === "OUTREACH_SENT" || a.activity_type === "TEST_EMAIL_SENT" ? (
+                        <EmailActivityEntry activity={a} />
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-xs font-medium text-foreground">
+                              {ACTIVITY_LABELS[a.activity_type] ?? a.activity_type}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {a.occurred_at
+                                ? formatDistanceToNow(new Date(a.occurred_at), { addSuffix: true })
+                                : ""}
+                            </span>
+                          </div>
+                          {a.body && (
+                            <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-3">{a.body}</p>
+                          )}
+                        </>
                       )}
                     </li>
                   ))}

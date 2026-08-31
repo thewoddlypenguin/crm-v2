@@ -14,6 +14,8 @@ import os
 import traceback
 from dataclasses import dataclass
 
+from email_variables import render_sender_variables
+
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -58,6 +60,21 @@ def send_email(payload: EmailPayload, config: EmailConfig | None = None) -> Emai
         subject=payload.subject.strip(),
         body=_apply_signature(payload.body, cfg),
     )
+
+    # Safety-net variable render. Callers holding a Lead must render the full
+    # context (subject+body) BEFORE calling send_email; for anything that
+    # leaks through unrendered, resolve sender variables and blank lead
+    # variables so the provider never receives literal {{tokens}}.
+    if "{{" in prepared_payload.subject or "{{" in prepared_payload.body:
+        logger.warning(
+            "Unrendered template variables reached send_email | to=%s — applying sender safety-net",
+            prepared_payload.to_address,
+        )
+        prepared_payload = EmailPayload(
+            to_address=prepared_payload.to_address,
+            subject=render_sender_variables(prepared_payload.subject, cfg),
+            body=render_sender_variables(prepared_payload.body, cfg),
+        )
 
     logger.info(
         "Email send requested | provider=%s to=%s subject=%s test_mode=%s",
