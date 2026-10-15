@@ -312,6 +312,9 @@ def segment_to_dict(segment: Segment) -> dict:
         "is_active": segment.is_active,
         "created_at": segment.created_at.isoformat() if segment.created_at else None,
         "updated_at": segment.updated_at.isoformat() if segment.updated_at else None,
+        # Canonical value to put in a CSV `segment` column (imports also accept
+        # the key and any spacing/hyphen/underscore variant of either).
+        "csv_value": segment.label,
     }
 
 def activity_to_dict(a: Activity) -> dict:
@@ -1559,6 +1562,8 @@ def normalize_enum_value(field_name: str, value: str) -> str:
 
     # Phrase-aware mapping for segment values.
     # DB lead_segment enum values are: COACH, CONSULTANT, SOLOPRENEUR, OTHER.
+    # NOTE: this only handles the LEGACY enum. Custom (org-created) segments
+    # are resolved separately in resolve_segment_value() before this runs.
     if field_name == "segment":
         lowered = raw.lower()
 
@@ -1594,6 +1599,44 @@ def normalize_enum_value(field_name: str, value: str) -> str:
     )
 
 
+def _slug(text: str) -> str:
+    """Normalize to a comparison slug: lowercase, letters/digits only."""
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def resolve_segment_value(db: Session, org_id: str, raw: str | None) -> dict | None:
+    """Resolve a raw CSV/`segment` string against the org's custom segments.
+
+    Tries, in order:
+      1. exact key match (case-insensitive)
+      2. exact label match (case-insensitive)
+      3. slug match — "Home Services", "home_services", "home-services" and
+         "HomeServices" all resolve to a segment labeled "Home Services"
+    Returns {"segment": <legacy enum or None>, "segment_id": <id>} or None
+    if nothing matched (caller then falls back to the legacy enum mapping).
+    """
+    if not raw or not raw.strip():
+        return None
+    needle = raw.strip()
+    needle_slug = _slug(needle)
+
+    segments = db.query(Segment).filter(Segment.organization_id == org_id).all()
+
+    for seg in segments:  # 1. key match
+        if seg.key and seg.key.strip().lower() == needle.lower():
+            return {"segment": legacy_segment_or_none(seg.key), "segment_id": seg.id}
+    for seg in segments:  # 2. label match
+        if seg.label and seg.label.strip().lower() == needle.lower():
+            return {"segment": legacy_segment_or_none(seg.key), "segment_id": seg.id}
+    if needle_slug:  # 3. slug match
+        for seg in segments:
+            if seg.label and _slug(seg.label) == needle_slug:
+                return {"segment": legacy_segment_or_none(seg.key), "segment_id": seg.id}
+            if seg.key and _slug(seg.key) == needle_slug:
+                return {"segment": legacy_segment_or_none(seg.key), "segment_id": seg.id}
+    return None
+
+
 @api.post("/import/csv")
 async def import_csv(
     file: UploadFile = File(...),
@@ -1625,6 +1668,15 @@ async def import_csv(
     for i, row in enumerate(reader, start=2):
         try:
             lead_data = parse_csv_row(row, header_map)
+            # Resolve raw CSV segment against custom segments (same as preview)
+            raw_segment = lead_data.pop("segment", None)
+            if raw_segment:
+                resolved = resolve_segment_value(db, org.id, raw_segment)
+                if resolved:
+                    lead_data["segment"] = resolved["segment"]
+                    lead_data["segment_id"] = resolved["segment_id"]
+                else:
+                    lead_data["segment"] = normalize_enum_value("segment", raw_segment)
             if find_existing_lead(db, org.id, lead_data, exclude_row_keys=set()):
                 duplicates += 1
                 continue
@@ -1675,6 +1727,11 @@ def parse_csv_row(row: dict, header_map: dict) -> dict:
         else:
             if model_field == "_tags":  # CSV tags column — handled separately
                 lead_data["tags"] = val
+                continue
+            if model_field == "segment":
+                # Keep RAW; resolved against custom segments later (needs db+org).
+                # Guard against obviously-invalid legacy enums downstream.
+                lead_data[model_field] = val
                 continue
             if model_field in ENUM_FIELDS:
                 val = normalize_enum_value(model_field, val)
@@ -1728,13 +1785,24 @@ def find_existing_lead(db: Session, org_id: str, lead_data: dict, exclude_row_ke
 
 def _merge_into(existing: Lead, incoming: dict) -> None:
     """Merge incoming CSV values into an existing lead (fill-blank wins).
-    Blank/non-provided incoming values never overwrite existing data."""
+    Blank/non-provided incoming values never overwrite existing data.
+
+    Segment policy: a specific incoming segment fills a blank one, and also
+    replaces the generic OTHER fallback (so re-importing with correct
+    segments fixes leads previously filed as OTHER). A real existing
+    assignment (any other legacy enum or a custom segment_id) is never
+    overwritten.
+    """
     for field, value in incoming.items():
         if field in {"segment", "segment_id"}:
-            continue
+            continue  # handled below with segment-specific policy
         current = getattr(existing, field, None)
         if current is None or (isinstance(current, str) and not current.strip()):
             setattr(existing, field, value)
+    incoming_segment_id = incoming.get("segment_id")
+    if incoming_segment_id and existing.segment_id is None and existing.segment in (None, "OTHER"):
+        existing.segment_id = incoming_segment_id
+        existing.segment = incoming.get("segment")
     # Merge tags (union)
     merged = decode_tags(existing.tags)
     for tag in normalize_tags(incoming.get("tags")):
@@ -1779,6 +1847,16 @@ async def import_csv_preview(
         try:
             lead_data = parse_csv_row(row, header_map)
             row_tags = normalize_tags(lead_data.pop("tags", ""))
+            # Resolve raw CSV segment against the org's custom segments first;
+            # fall back to the legacy enum phrase-mapping (COACH/CONSULTANT/...).
+            raw_segment = lead_data.pop("segment", None)
+            if raw_segment:
+                resolved = resolve_segment_value(db, org.id, raw_segment)
+                if resolved:
+                    lead_data["segment"] = resolved["segment"]
+                    lead_data["segment_id"] = resolved["segment_id"]
+                else:
+                    lead_data["segment"] = normalize_enum_value("segment", raw_segment)
             key = _dup_key(lead_data)
             matched = find_existing_lead(db, org.id, lead_data, exclude_row_keys=claimed_keys)
             if key:

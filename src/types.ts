@@ -105,6 +105,8 @@ export interface SegmentOption {
   is_active: boolean;
   created_at: string | null;
   updated_at: string | null;
+  /** Canonical value for CSV imports (matches segment label); key + slug variants also accepted */
+  csv_value?: string;
 }
 
 // ─── API Responses ────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ from models import (  # noqa: E402
     Lead,
     Organization,
     OrganizationMember,
+    Segment,
     User,
 )
 
@@ -70,6 +71,11 @@ def client(monkeypatch, tmp_path):
     org = Organization(id="o-1", name="Test Org")
     member = OrganizationMember(id="m-1", organization_id="o-1", user_id="u-1", role="owner")
     settings = EmailSettings(owner_user_id="u-1", test_mode_enabled=True)
+    # Custom segment: key "home-services", label "Home Services" (org-created)
+    seg = Segment(
+        id="seg-home", owner_user_id="u-1", organization_id="o-1",
+        key="home-services", label="Home Services", sort_order=10,
+    )
     lead_a = Lead(
         id="lead-a", owner_user_id="u-1", organization_id="o-1",
         first_name="Dana", last_name="Reeves", full_name="Dana Reeves",
@@ -88,7 +94,7 @@ def client(monkeypatch, tmp_path):
         business_name="Vega Coaching", email="al@vegacoach.com",
         phone="555-333-4444", status="WON",
     )
-    s.add_all([user, org, member, settings, lead_a, lead_b, lead_c])
+    s.add_all([user, org, member, settings, seg, lead_a, lead_b, lead_c])
     s.commit()
     s.close()
 
@@ -114,7 +120,7 @@ def client(monkeypatch, tmp_path):
 
     def _seed():
         s2 = TestSession()
-        s2.add_all([user, org, member, settings, lead_a, lead_b, lead_c])
+        s2.add_all([user, org, member, settings, seg, lead_a, lead_b, lead_c])
         s2.commit()
         s2.close()
 
@@ -488,3 +494,122 @@ class TestCsvDuplicateHandling:
         text = res.text
         assert "tags" in text.splitlines()[0]
         assert "vip, warm" in text
+
+
+# ─── 7. CSV segment resolution (custom segments) ─────────────────────────────
+
+
+class TestCsvSegmentResolution:
+    """CSV `segment` column must match org-created segments, not just legacy enums.
+
+    Regression: importing leads with segment "Home Services" (a custom segment)
+    filed them all under OTHER because only the legacy enum was consulted.
+    """
+
+    def test_preview_resolves_custom_segment_by_label(self, client: SimpleClient):
+        csv_content = (
+            "full_name,email,segment\n"
+            "Pat Home,pathome@x.com,Home Services\n"
+        )
+        prev = client.post("/api/import/csv/preview", files=_csv_file(csv_content))
+        assert prev.status_code == 200, prev.text
+        assert prev.json()["new_count"] == 1
+        assert prev.json()["duplicate_count"] == 0
+        res = client.post("/api/import/csv/commit", json={
+            "batch": prev.json()["batch"], "actions": {},
+        })
+        assert res.status_code == 200
+        assert res.json()["inserted"] == 1
+        leads = client.get("/api/leads", params={"search": "pathome@x.com"}).json()
+        assert leads["total"] == 1
+        assert leads["items"][0]["segment_label"] == "Home Services"
+        assert leads["items"][0]["segment_id"] == "seg-home"
+
+    def test_import_resolves_segment_key_and_slug_variants(self, client: SimpleClient):
+        for raw in ("home-services", "home_services", "HOMESERVICES"):
+            csv_content = (
+                f"full_name,email,segment\n"
+                f"Slug Lead {raw},slug-{raw.replace('_', '').replace('-', '')}@x.com,{raw}\n"
+            )
+            prev = client.post("/api/import/csv/preview", files=_csv_file(csv_content))
+            assert prev.status_code == 200, prev.text
+            res = client.post("/api/import/csv/commit", json={
+                "batch": prev.json()["batch"], "actions": {},
+            })
+            assert res.status_code == 200
+            leads = client.get(
+                "/api/leads", params={"search": f"slug-{raw.replace('_', '').replace('-', '')}@x.com"}
+            ).json()
+            assert leads["total"] == 1, f"{raw!r} should resolve"
+            assert leads["items"][0]["segment_id"] == "seg-home"
+            assert leads["items"][0]["segment_label"] == "Home Services"
+
+    def test_import_legacy_enum_still_works(self, client: SimpleClient):
+        csv_content = (
+            "full_name,email,segment\n"
+            "Coach Kim,coachkim@x.com,coach\n"
+        )
+        prev = client.post("/api/import/csv/preview", files=_csv_file(csv_content))
+        assert prev.status_code == 200
+        client.post("/api/import/csv/commit", json={"batch": prev.json()["batch"], "actions": {}})
+        leads = client.get("/api/leads", params={"search": "coachkim@x.com"}).json()
+        assert leads["items"][0]["segment"] == "COACH"
+
+    def test_import_unknown_segment_falls_back_to_other(self, client: SimpleClient):
+        csv_content = (
+            "full_name,email,segment\n"
+            "Odd Lead,odd@x.com,Underwater Basket Weaving\n"
+        )
+        prev = client.post("/api/import/csv/preview", files=_csv_file(csv_content))
+        assert prev.status_code == 200
+        client.post("/api/import/csv/commit", json={"batch": prev.json()["batch"], "actions": {}})
+        leads = client.get("/api/leads", params={"search": "odd@x.com"}).json()
+        assert leads["items"][0]["segment"] == "OTHER"
+        assert leads["items"][0]["segment_id"] is None
+
+    def test_import_without_segment_column_leaves_blank(self, client: SimpleClient):
+        csv_content = (
+            "full_name,email\n"
+            "No Seg,noseg@x.com\n"
+        )
+        prev = client.post("/api/import/csv/preview", files=_csv_file(csv_content))
+        assert prev.status_code == 200
+        client.post("/api/import/csv/commit", json={"batch": prev.json()["batch"], "actions": {}})
+        leads = client.get("/api/leads", params={"search": "noseg@x.com"}).json()
+        assert leads["items"][0]["segment"] is None
+        assert leads["items"][0]["segment_id"] is None
+
+    def test_legacy_import_endpoint_resolves_custom_segment(self, client: SimpleClient):
+        csv_content = (
+            "full_name,email,segment\n"
+            "Legacy Home,legacyhome@x.com,Home Services\n"
+        )
+        res = client.post("/api/import/csv", files=_csv_file(csv_content))
+        assert res.status_code == 200
+        assert res.json()["accepted"] == 1
+        leads = client.get("/api/leads", params={"search": "legacyhome@x.com"}).json()
+        assert leads["items"][0]["segment_id"] == "seg-home"
+
+    def test_update_action_does_not_clobber_segment(self, client: SimpleClient):
+        """Duplicate 'update' fills blanks but never overwrites segment fields."""
+        # lead-a (Dana) has no segment; incoming row claims Home Services.
+        csv_content = (
+            "full_name,email,segment\n"
+            "Dana R,dana@reevesfitness.com,Home Services\n"
+        )
+        prev = client.post("/api/import/csv/preview", files=_csv_file(csv_content))
+        assert prev.json()["duplicate_count"] == 1
+        res = client.post("/api/import/csv/commit", json={
+            "batch": prev.json()["batch"], "actions": {"2": "update"},
+        })
+        assert res.json()["updated"] == 1
+        lead = client.get("/api/leads/lead-a").json()
+        # fill-blank policy: lead-a had NO segment, so incoming segment applies
+        assert lead["segment_id"] == "seg-home"
+
+    def test_segments_api_exposes_csv_value(self, client: SimpleClient):
+        res = client.get("/api/segments")
+        assert res.status_code == 200
+        seg = next(s for s in res.json() if s["id"] == "seg-home")
+        assert seg["csv_value"] == "Home Services"
+

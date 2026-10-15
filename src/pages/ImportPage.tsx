@@ -102,6 +102,7 @@ export default function ImportPage() {
           <div className="text-xs text-muted-foreground space-y-1">
             <p><strong>Supported columns:</strong> first_name, last_name, full_name, business_name (or company), email, phone, segment, niche, website_url (or website), linkedin_url (or linkedin), contact_path, location_text (or location), team_size_estimate (or team_size), source_url, personalization_note, outreach_angle, tags (comma-separated)</p>
             <p><strong>Duplicates:</strong> rows matching an existing lead by email (or phone) are flagged for review — you choose to update, merge, or skip each one. Rows without email and phone are never flagged.</p>
+            <p><strong>Segments:</strong> the segment column matches your custom segments by name — &quot;Home Services&quot;, &quot;home_services&quot;, or &quot;home-services&quot; all resolve to the Home Services segment. Unrecognized values fall back to the built-in Coach / Consultant / Solopreneur / Other categories.</p>
           </div>
 
           {file && (
