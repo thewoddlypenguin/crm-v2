@@ -680,6 +680,15 @@ def list_leads(
         sort_col = Lead.niche
     elif sort_by == "full_name":
         sort_col = Lead.full_name
+    elif sort_by == "business_name":
+        sort_col = Lead.business_name
+    elif sort_by == "priority_tier":
+        # A/B/C — alphabetical order matches tier rank
+        sort_col = Lead.priority_tier
+    elif sort_by == "segment":
+        # Sort by the custom segment's LABEL (leads without a segment go last)
+        q = q.outerjoin(Segment, Lead.segment_id == Segment.id)
+        sort_col = Segment.label
     else:
         sort_col = Lead.total_score
 

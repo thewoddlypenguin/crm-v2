@@ -347,6 +347,31 @@ class TestStatusSorting:
         items = res.json()["items"]
         assert items[0]["full_name"] == "Fresh Lead"
 
+    def test_sort_by_segment_label(self, client: SimpleClient):
+        """Segment sort orders by the custom segment's LABEL, unsegmented last."""
+        client.put("/api/leads/lead-a", json={"segment_id": "seg-home"})
+        res = client.get("/api/leads", params={"sort_by": "segment", "sort_dir": "asc"})
+        labels = [
+            (l["segment_label"] or l["segment"] or "")
+            for l in res.json()["items"]
+        ]
+        # labeled segments first (alphabetical by label), blanks last
+        assert [x for x in labels if x] == sorted([x for x in labels if x])
+        assert labels[-1] == ""
+
+    def test_sort_by_priority_tier(self, client: SimpleClient):
+        client.put("/api/leads/lead-a", json={"priority_tier": "A"})
+        client.put("/api/leads/lead-b", json={"priority_tier": "C"})
+        client.put("/api/leads/lead-c", json={"priority_tier": "B"})
+        res = client.get("/api/leads", params={"sort_by": "priority_tier", "sort_dir": "asc"})
+        tiers = [l["priority_tier"] for l in res.json()["items"]]
+        assert tiers == sorted(tiers)
+
+    def test_sort_by_business_name(self, client: SimpleClient):
+        res = client.get("/api/leads", params={"sort_by": "business_name", "sort_dir": "asc"})
+        names = [l["business_name"] for l in res.json()["items"] if l["business_name"]]
+        assert names == sorted(names)
+
 
 # ─── 6. CSV import: duplicate handling ────────────────────────────────────────
 

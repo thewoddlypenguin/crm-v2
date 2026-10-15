@@ -22,8 +22,34 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Plus, MoreHorizontal, Trash2, ArrowUpDown } from "lucide-react";
+import { Search, Plus, MoreHorizontal, Trash2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+
+interface SortableHeadProps {
+  label: string;
+  col: string;
+  active: boolean;
+  dir: "asc" | "desc";
+  onToggle: (col: string) => void;
+}
+
+/** Clickable table header with sort state: neutral ⇅ / active ↑ asc / ↓ desc. */
+function SortableHead({ label, col, active, dir, onToggle }: SortableHeadProps) {
+  const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <TableHead
+      className={`bg-muted/50 text-xs font-semibold uppercase tracking-wide cursor-pointer select-none hover:text-foreground transition-colors ${
+        active ? "text-foreground" : "text-muted-foreground"
+      }`}
+      onClick={() => onToggle(col)}
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <div className="flex items-center gap-1">
+        {label} <Icon className="h-3 w-3" />
+      </div>
+    </TableHead>
+  );
+}
 
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -344,38 +370,15 @@ export default function LeadsPage() {
                   onCheckedChange={toggleAll}
                 />
               </TableHead>
-              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("full_name")}>
-                <div className="flex items-center gap-1">
-                  Name {sortBy === "full_name" && <ArrowUpDown className="h-3 w-3" />}
-                </div>
-              </TableHead>
-              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Business</TableHead>
-              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("niche")}>
-                <div className="flex items-center gap-1">
-                  Niche {sortBy === "niche" && <ArrowUpDown className="h-3 w-3" />}
-                </div>
-              </TableHead>
-              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Segment</TableHead>
-              <TableHead
-                className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
-                onClick={() => toggleSort("status")}
-              >
-                <div className="flex items-center gap-1">
-                  Status {sortBy === "status" && <ArrowUpDown className="h-3 w-3" />}
-                </div>
-              </TableHead>
+              <SortableHead label="Name" col="full_name" active={sortBy === "full_name"} dir={sortDir as "asc" | "desc"} onToggle={toggleSort} />
+              <SortableHead label="Business" col="business_name" active={sortBy === "business_name"} dir={sortDir as "asc" | "desc"} onToggle={toggleSort} />
+              <SortableHead label="Niche" col="niche" active={sortBy === "niche"} dir={sortDir as "asc" | "desc"} onToggle={toggleSort} />
+              <SortableHead label="Segment" col="segment" active={sortBy === "segment"} dir={sortDir as "asc" | "desc"} onToggle={toggleSort} />
+              <SortableHead label="Status" col="status" active={sortBy === "status"} dir={sortDir as "asc" | "desc"} onToggle={toggleSort} />
               <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</TableHead>
-              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("total_score")}>
-                <div className="flex items-center gap-1">
-                  Score <ArrowUpDown className="h-3 w-3" />
-                </div>
-              </TableHead>
-              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Priority</TableHead>
-              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("next_follow_up_at")}>
-                <div className="flex items-center gap-1">
-                  Next Follow-up <ArrowUpDown className="h-3 w-3" />
-                </div>
-              </TableHead>
+              <SortableHead label="Score" col="total_score" active={sortBy === "total_score"} dir={sortDir as "asc" | "desc"} onToggle={toggleSort} />
+              <SortableHead label="Priority" col="priority_tier" active={sortBy === "priority_tier"} dir={sortDir as "asc" | "desc"} onToggle={toggleSort} />
+              <SortableHead label="Next Follow-up" col="next_follow_up_at" active={sortBy === "next_follow_up_at"} dir={sortDir as "asc" | "desc"} onToggle={toggleSort} />
               <TableHead className="w-10 bg-muted/50" />
             </TableRow>
           </TableHeader>
