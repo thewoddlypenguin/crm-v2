@@ -39,6 +39,10 @@ export default function LeadsPage() {
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkSegmentId, setBulkSegmentId] = useState<string>("");
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const [tagFilter, setTagFilter] = useState<string>("all");
+  const [bulkTagMode, setBulkTagMode] = useState<"add" | "remove">("add");
+  const [bulkTagInput, setBulkTagInput] = useState("");
 
   const segmentLabelMap = useMemo(
     () =>
@@ -56,6 +60,7 @@ export default function LeadsPage() {
         status: statusFilter !== "all" ? (statusFilter as LeadStatus) : undefined,
         priority: priorityFilter !== "all" ? (priorityFilter as PriorityTier) : undefined,
         segment_id: segmentFilter !== "all" ? segmentFilter : undefined,
+        tag: tagFilter !== "all" ? tagFilter : undefined,
         sort_by: sortBy,
         sort_dir: sortDir,
         page,
@@ -68,7 +73,7 @@ export default function LeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter, priorityFilter, segmentFilter, sortBy, sortDir, page]);
+  }, [search, statusFilter, priorityFilter, segmentFilter, tagFilter, sortBy, sortDir, page]);
 
   useEffect(() => {
     fetchLeads();
@@ -79,6 +84,10 @@ export default function LeadsPage() {
       .listSegments()
       .then(setSegments)
       .catch((err) => console.error("Failed to load segments", err));
+    api
+      .listLeadTags()
+      .then((res) => setAllTags(res.tags))
+      .catch((err) => console.error("Failed to load tags", err));
   }, []);
 
   const toggleSort = (col: string) => {
@@ -122,6 +131,23 @@ export default function LeadsPage() {
       setSelectedIds(new Set());
       setBulkSegmentId("");
       fetchLeads();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleBulkTags = async () => {
+    const tags = bulkTagInput.split(",").map((t) => t.trim()).filter(Boolean);
+    if (selectedIds.size === 0 || tags.length === 0) return;
+    try {
+      await api.bulkTagChange(Array.from(selectedIds), tags, bulkTagMode);
+      setSelectedIds(new Set());
+      setBulkTagInput("");
+      fetchLeads();
+      api
+        .listLeadTags()
+        .then((res) => setAllTags(res.tags))
+        .catch(() => {});
     } catch (err) {
       console.error(err);
     }
@@ -212,6 +238,26 @@ export default function LeadsPage() {
           </SelectContent>
         </Select>
 
+        <Select
+          value={tagFilter}
+          onValueChange={(v) => {
+            setTagFilter(v);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-[140px]">
+            <SelectValue placeholder="Tag" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Tags</SelectItem>
+            {allTags.map((t) => (
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <Link to="/leads/new">
           <Button className="gap-2">
             <Plus className="h-4 w-4" />
@@ -256,6 +302,34 @@ export default function LeadsPage() {
         Apply segment
       </Button>
     </div>
+
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-sm text-muted-foreground">Tags:</span>
+      <Select value={bulkTagMode} onValueChange={(v) => setBulkTagMode(v as "add" | "remove")}>
+        <SelectTrigger className="w-[130px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="add">Add tags</SelectItem>
+          <SelectItem value="remove">Remove tags</SelectItem>
+        </SelectContent>
+      </Select>
+      <Input
+        className="w-[220px]"
+        placeholder="tag1, tag2 (Enter to apply)"
+        value={bulkTagInput}
+        onChange={(e) => setBulkTagInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            handleBulkTags();
+          }
+        }}
+      />
+      <Button variant="default" size="sm" onClick={handleBulkTags} disabled={!bulkTagInput.trim()}>
+        Apply tags
+      </Button>
+    </div>
   </div>
 )}
 
@@ -282,7 +356,15 @@ export default function LeadsPage() {
                 </div>
               </TableHead>
               <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Segment</TableHead>
-              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</TableHead>
+              <TableHead
+                className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
+                onClick={() => toggleSort("status")}
+              >
+                <div className="flex items-center gap-1">
+                  Status {sortBy === "status" && <ArrowUpDown className="h-3 w-3" />}
+                </div>
+              </TableHead>
+              <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</TableHead>
               <TableHead className="bg-muted/50 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer" onClick={() => toggleSort("total_score")}>
                 <div className="flex items-center gap-1">
                   Score <ArrowUpDown className="h-3 w-3" />
@@ -300,13 +382,13 @@ export default function LeadsPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                   Loading...
                 </TableCell>
               </TableRow>
             ) : leads.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                   No leads found
                 </TableCell>
               </TableRow>
@@ -352,6 +434,22 @@ export default function LeadsPage() {
 
                   <TableCell className="py-3">
                     <StatusBadge status={lead.status} />
+                  </TableCell>
+
+                  <TableCell className="py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {(lead.tags || []).slice(0, 3).map((t) => (
+                        <span key={t} className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                          {t}
+                        </span>
+                      ))}
+                      {(lead.tags || []).length > 3 && (
+                        <span className="text-[11px] text-muted-foreground">+{lead.tags!.length - 3}</span>
+                      )}
+                      {(!lead.tags || lead.tags.length === 0) && (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </div>
                   </TableCell>
 
                   <TableCell className="py-3">

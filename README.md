@@ -8,13 +8,35 @@ A lightweight personal CRM for solo outreach — track leads, manage pipeline, s
 
 ## Table of Contents
 
+- [Features](#features)
 - [Local Development](#local-development)
+- [Running Tests](#running-tests)
 - [Environment Variables](#environment-variables)
 - [Deployment](#deployment)
   - [Docker (recommended)](#docker-recommended)
   - [Systemd (bare metal)](#systemd-bare-metal)
 - [Email Provider Setup](#email-provider-setup)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Features
+
+### Lead tags
+- Each lead carries up to 20 tags (lowercase, max 40 chars each), stored as a JSON-encoded TEXT column (`leads.tags`) so both SQLite (tests) and Postgres (production) work with no migration tooling.
+- Edit tags per lead in the create form, lead detail page, or via **bulk tagging** on the Leads page (select rows → add/remove/replace mode).
+- Filter the leads list by any tag; export CSV includes a `tags` column.
+- API: `POST /api/leads/bulk-tags` (`{lead_ids, tags, mode: "add"|"remove"|"set"}`), `GET /api/leads-tags` (org-wide distinct tags for autocomplete), `?tag=` filter on `GET /api/leads`.
+- Production databases need migration `migrations/010_add_lead_tags.sql` (`ALTER TABLE leads ADD COLUMN IF NOT EXISTS tags TEXT` + a GIN trigram index for fast LIKE filters).
+
+### CSV import with duplicate review
+- `POST /api/import/csv/preview` parses the file, reports unparseable rows, and flags duplicates — matched by email (case-insensitive) first, then by phone digits as fallback. In-file duplicates (same contact twice in one upload) are flagged too.
+- The preview returns a batch token; `POST /api/import/csv/commit` applies your per-row decision: **skip**, **update** (fill blanks on the existing lead), or **merge** (fill blanks + union tags). Rows without email and phone are never flagged.
+- If no duplicates and no errors, the Import page commits immediately; otherwise it shows a side-by-side review screen before anything is written.
+- The legacy `POST /api/import/csv` endpoint still works and now auto-skips duplicates (reported as `duplicates_skipped`).
+
+### Status sorting
+- Click the **Status** column header on the Leads page to sort by pipeline stage (New → Scored → Ready to Contact → … → Lost/Nurture), grouped by defined pipeline order rather than alphabetically.
 
 ---
 
@@ -71,6 +93,30 @@ crm-v2/
 ├── docker-compose.yml
 ├── leverage-crm.service  # systemd unit file
 └── src/                # React frontend (Vite + TypeScript + shadcn/ui)
+```
+
+---
+
+## Running Tests
+
+Backend (pytest, file-based SQLite — never touches Postgres):
+
+```bash
+uv run pytest tests/ -q
+```
+
+Frontend (vitest + jsdom + Testing Library):
+
+```bash
+npm run test        # or: npx vitest run
+```
+
+Coverage highlights: email variable rendering (37 backend + 15 frontend tests), tag normalization/CRUD/bulk ops/filtering, status ordering, CSV duplicate preview + skip/update/merge commit behaviors (36 tests in `tests/test_tags_import.py`), and the TagInput component (10 tests in `tests/tagInput.test.tsx`).
+
+Type-check the frontend (the `build` script does not type-check):
+
+```bash
+npx tsc -b
 ```
 
 ---

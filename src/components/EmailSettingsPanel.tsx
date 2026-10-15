@@ -40,6 +40,7 @@ export default function EmailSettingsPanel() {
 
   // Provider config state
   const [cfg, setCfg] = useState<EmailSettings | null>(null);
+  void cfg; // config values live in cfgForm; kept for potential future display use
   const [cfgLoading, setCfgLoading] = useState(true);
   const [cfgSaving, setCfgSaving] = useState(false);
   const [cfgError, setCfgError] = useState<string | null>(null);

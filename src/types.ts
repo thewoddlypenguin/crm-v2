@@ -80,6 +80,7 @@ export interface Lead {
   next_follow_up_at: string | null;
   outcome_note: string | null;
   do_not_contact: boolean;
+  tags: string[] | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -183,8 +184,33 @@ export interface CrmNotification {
 export interface ImportResult {
   accepted: number;
   rejected: number;
+  duplicates_skipped?: number;
   errors: { row: number; error: string }[];
 }
+
+export interface ImportDuplicate {
+  row_number: number;
+  incoming: { full_name?: string; business_name?: string; email?: string; phone?: string };
+  existing: { lead_id: string; full_name?: string; email?: string; phone?: string } | { in_file: true; first_row?: number };
+  incoming_tags: string[];
+}
+
+export interface ImportPreview {
+  batch: string;
+  new_count: number;
+  duplicate_count: number;
+  duplicates: ImportDuplicate[];
+  errors: { row: number; error: string }[];
+}
+
+export interface ImportCommitResult {
+  inserted: number;
+  updated: number;
+  merged: number;
+  skipped: number;
+}
+
+export type ImportAction = "update" | "skip" | "merge";
 
 export type PipelineData = Record<LeadStatus, Lead[]>;
 

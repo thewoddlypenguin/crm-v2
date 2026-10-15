@@ -6,6 +6,9 @@ import type {
   EmailTemplate,
   GmailStatus,
   ImportResult,
+  ImportPreview,
+  ImportCommitResult,
+  ImportAction,
   Lead,
   LeadsResponse,
   LeadStatus,
@@ -126,6 +129,7 @@ export async function listLeads(params?: {
   status?: LeadStatus;
   priority?: PriorityTier;
   segment_id?: string;
+  tag?: string;
   sort_by?: string;
   sort_dir?: string;
   page?: number;
@@ -173,6 +177,21 @@ export async function bulkSegmentChange(
     method: "POST",
     body: JSON.stringify({ lead_ids: ids, segment_id }),
   });
+}
+
+export async function bulkTagChange(
+  ids: string[],
+  tags: string[] | string,
+  mode: "add" | "remove" | "set"
+): Promise<{ updated: number }> {
+  return request("/leads/bulk-tags", {
+    method: "POST",
+    body: JSON.stringify({ lead_ids: ids, tags, mode }),
+  });
+}
+
+export async function listLeadTags(): Promise<{ tags: string[] }> {
+  return request("/leads-tags");
 }
 
 
@@ -289,6 +308,31 @@ export async function importCSV(file: File): Promise<ImportResult> {
     throw new Error(body.detail || "Import failed");
   }
   return res.json();
+}
+
+export async function importPreview(file: File): Promise<ImportPreview> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${BASE}/import/csv/preview`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(body.detail || "Import preview failed");
+  }
+  return res.json();
+}
+
+export async function importCommit(
+  batch: string,
+  actions: Record<string, ImportAction>
+): Promise<ImportCommitResult> {
+  return request("/import/csv/commit", {
+    method: "POST",
+    body: JSON.stringify({ batch, actions }),
+  });
 }
 
 export function exportCSVUrl(params?: {

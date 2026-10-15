@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -13,7 +14,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, case
 from sqlalchemy.orm import Session
 
 from auth import (
@@ -76,6 +77,7 @@ class LeadCreate(BaseModel):
     business_name: Optional[str] = None
     segment: Optional[str] = None
     segment_id: Optional[str] = None
+    tags: Optional[object] = None  # list[str] or comma-separated str — normalized server-side
     niche: Optional[str] = None
     website_url: Optional[str] = None
     email: Optional[str] = None
@@ -101,6 +103,7 @@ class LeadUpdate(BaseModel):
     business_name: Optional[str] = None
     segment: Optional[str] = None
     segment_id: Optional[str] = None
+    tags: Optional[object] = None  # replaces the full tag set (send [] to clear)
     niche: Optional[str] = None
     website_url: Optional[str] = None
     email: Optional[str] = None
@@ -148,6 +151,11 @@ class BulkStatusChange(BaseModel):
 class BulkSegmentChange(BaseModel):
     lead_ids: list[str]
     segment_id: str
+
+class BulkTagChange(BaseModel):
+    lead_ids: list[str]
+    tags: object  # list[str] or comma-separated str
+    mode: str = "add"  # "add" (union) | "remove" (subtract) | "set" (replace)
 
 class SegmentCreate(BaseModel):
     key: str
@@ -200,6 +208,57 @@ class EmailSettingsUpdate(BaseModel):
     test_mode_enabled: Optional[bool] = None
 
 
+# ─── Tags helpers ────────────────────────────────────────────────────────────
+
+MAX_TAGS_PER_LEAD = 20
+MAX_TAG_LENGTH = 40
+VALID_TAG_RE = re.compile(r"^[\w][\w\s/&+.-]{0,%d}$" % (MAX_TAG_LENGTH - 1), re.UNICODE)
+
+
+def normalize_tags(raw: object) -> list[str]:
+    """Normalize arbitrary input into a clean, deduped tag list.
+
+    Accepts: list of strings, comma-separated string, or None.
+    Rules: lowercase, trimmed, deduped (order-preserving), capped at
+    MAX_TAGS_PER_LEAD entries of MAX_TAG_LENGTH chars. Empty/invalid
+    entries are dropped silently (tags are advisory metadata).
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        parts = [p for p in raw.split(",")]
+    elif isinstance(raw, (list, tuple)):
+        parts = [str(p) for p in raw]
+    else:
+        return []
+    out: list[str] = []
+    for p in parts:
+        tag = re.sub(r"\s+", " ", p.strip().lower())
+        if not tag or tag in out:
+            continue
+        if not VALID_TAG_RE.match(tag):
+            continue
+        out.append(tag)
+        if len(out) >= MAX_TAGS_PER_LEAD:
+            break
+    return out
+
+
+def encode_tags(tags: object) -> str | None:
+    normalized = normalize_tags(tags)
+    return json.dumps(normalized) if normalized else None
+
+
+def decode_tags(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except (ValueError, TypeError):
+        return []
+    return normalize_tags(parsed)
+
+
 def lead_to_dict(lead: Lead) -> dict:
     return {
         "id": lead.id,
@@ -212,6 +271,7 @@ def lead_to_dict(lead: Lead) -> dict:
         "segment": lead.segment,
         "segment_id": lead.segment_id,
         "segment_label": lead.segment_rel.label if lead.segment_rel else None,
+        "tags": decode_tags(lead.tags),
         "niche": lead.niche,
         "website_url": lead.website_url,
         "email": lead.email,
@@ -565,6 +625,7 @@ def list_leads(
     status: Optional[str] = None,
     priority: Optional[str] = None,
     segment_id: Optional[str] = None,
+    tag: Optional[str] = None,
     sort_by: Optional[str] = "total_score",
     sort_dir: Optional[str] = "desc",
     page: int = Query(1, ge=1),
@@ -587,6 +648,9 @@ def list_leads(
         q = q.filter(Lead.priority_tier == priority)
     if segment_id:
         q = q.filter(Lead.segment_id == segment_id)
+    if tag:
+        # JSON-encoded array stored as text — match with a JSON-safe substring
+        q = q.filter(Lead.tags.like(f'%"{tag.strip().lower()}"%'))
 
     # Sorting
     sort_col = None
@@ -598,6 +662,17 @@ def list_leads(
         sort_col = Lead.created_at
     elif sort_by == "last_contacted_at":
         sort_col = Lead.last_contacted_at
+    elif sort_by == "status":
+        # Pipeline order — NEW first, LOST/NURTURE last (SQLite + Postgres safe)
+        status_order = case(
+            {s: i for i, s in enumerate(PIPELINE_ORDER)},
+            value=Lead.status,
+            else_=len(PIPELINE_ORDER),
+        )
+        q = q.order_by(status_order.asc()) if sort_dir == "asc" else q.order_by(status_order.desc())
+        total = q.count()
+        leads = q.offset((page - 1) * page_size).limit(page_size).all()
+        return {"total": total, "page": page, "page_size": page_size, "items": [lead_to_dict(l) for l in leads]}
     elif sort_by == "niche":
         sort_col = Lead.niche
     elif sort_by == "full_name":
@@ -620,12 +695,15 @@ def create_lead(req: LeadCreate, org: OrgContext = Depends(get_current_org), db:
     payload = req.model_dump()
     payload.pop("segment", None)
     segment_id = payload.pop("segment_id", None)
+    lead_tags = encode_tags(payload.pop("tags", None))
 
     lead = Lead(
         owner_user_id=org.user_id,
         organization_id=org.id,
         **{k: v for k, v in payload.items() if v is not None},
     )
+    if lead_tags:
+        lead.tags = lead_tags
 
     if segment_id:
         segment = db.query(Segment).filter(
@@ -664,6 +742,10 @@ def update_lead(lead_id: str, req: LeadUpdate, org: OrgContext = Depends(get_cur
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     updates.pop("segment", None)
     segment_id = updates.pop("segment_id", None)
+
+    # tags: list/str input → normalized JSON; empty list clears the set
+    if "tags" in updates:
+        updates["tags"] = encode_tags(updates.pop("tags"))
 
     # do_not_contact is a boolean — must be handled separately since False is falsy
     if req.do_not_contact is not None:
@@ -785,6 +867,49 @@ def bulk_segment_change(req: BulkSegmentChange, org: OrgContext = Depends(get_cu
 
     db.commit()
     return {"updated": len(leads)}
+
+
+@api.post("/leads/bulk-tags")
+def bulk_tag_change(req: BulkTagChange, org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    if req.mode not in {"add", "remove", "set"}:
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {req.mode}")
+
+    tags = normalize_tags(req.tags)
+    if req.mode in {"add", "set"} and not tags:
+        raise HTTPException(status_code=400, detail="No valid tags provided")
+
+    leads = db.query(Lead).filter(
+        Lead.id.in_(req.lead_ids),
+        Lead.organization_id == org.id,
+    ).all()
+
+    for lead in leads:
+        current = decode_tags(lead.tags)
+        if req.mode == "add":
+            merged = current + [t for t in tags if t not in current]
+        elif req.mode == "remove":
+            merged = [t for t in current if t not in tags]
+        else:  # set
+            merged = tags
+        lead.tags = json.dumps(merged) if merged else None
+
+    db.commit()
+    return {"updated": len(leads)}
+
+
+@api.get("/leads-tags")
+def list_lead_tags(org: OrgContext = Depends(get_current_org), db: Session = Depends(get_db)):
+    """All distinct tags in use across the org — powers filter dropdowns and autocomplete."""
+    rows = db.query(Lead.tags).filter(
+        Lead.organization_id == org.id,
+        Lead.tags.isnot(None),
+    ).all()
+    out: list[str] = []
+    for (raw,) in rows:
+        for tag in decode_tags(raw):
+            if tag not in out:
+                out.append(tag)
+    return {"tags": sorted(out)}
 
 
 # ─── Activities ──────────────────────────────────────────────────────────────
@@ -1347,6 +1472,7 @@ CSV_FIELD_MAP = {
     "website_url": "website_url",
     "website": "website_url",
     "email": "email",
+    "phone": "phone",
     "contact_path": "contact_path",
     "linkedin_url": "linkedin_url",
     "linkedin": "linkedin_url",
@@ -1357,6 +1483,7 @@ CSV_FIELD_MAP = {
     "source_url": "source_url",
     "personalization_note": "personalization_note",
     "outreach_angle": "outreach_angle",
+    "tags": "_tags",
 }
 
 # Enum field mappings
@@ -1493,39 +1620,14 @@ async def import_csv(
     accepted = 0
     rejected = 0
     errors = []
+    duplicates = 0  # legacy endpoint: duplicates auto-skip (never silent double-insert)
 
     for i, row in enumerate(reader, start=2):
         try:
-            lead_data = {}
-            for csv_col, model_field in header_map.items():
-                val = row.get(csv_col, "").strip()
-                if val:
-                    if model_field == "team_size_estimate":
-                        raw_team_size = str(val).strip().lower()
-
-                        if raw_team_size in {"", "unknown", "n/a", "na", "none", "null", "unsure", "not sure", "-"}:
-                            pass
-                        else:
-                            raw_team_size = raw_team_size.replace(" to ", "-")
-                            first_part = raw_team_size.split("-", 1)[0].strip()
-
-                            digits = ""
-                            for ch in first_part:
-                                if ch.isdigit():
-                                    digits += ch
-                                elif digits:
-                                    break
-
-                            if digits:
-                                lead_data[model_field] = int(digits)
-                    else:
-                        if model_field in ENUM_FIELDS:
-                            val = normalize_enum_value(model_field, val)
-                        lead_data[model_field] = val
-
-
-            if not lead_data.get("full_name") and (lead_data.get("first_name") or lead_data.get("last_name")):
-                lead_data["full_name"] = f"{lead_data.get('first_name', '')} {lead_data.get('last_name', '')}".strip()
+            lead_data = parse_csv_row(row, header_map)
+            if find_existing_lead(db, org.id, lead_data, exclude_row_keys=set()):
+                duplicates += 1
+                continue
 
             lead = Lead(owner_user_id=org.user_id, organization_id=org.id, **lead_data)
             recalculate_scores(lead)
@@ -1536,7 +1638,258 @@ async def import_csv(
             errors.append({"row": i, "error": str(e)})
 
     db.commit()
-    return {"accepted": accepted, "rejected": rejected, "errors": errors[:20]}
+    return {"accepted": accepted, "rejected": rejected, "duplicates_skipped": duplicates, "errors": errors[:20]}
+
+
+# ─── CSV Import: preview + commit (duplicate handling) ──────────────────────
+
+class ImportCommitRequest(BaseModel):
+    batch: str  # batch token from /import/csv/preview
+    actions: dict  # row_number -> "update" | "skip" | "merge" (missing rows default to "skip")
+
+
+_IMPORT_BATCHES: dict = {}  # in-memory batch store (single-process deployment)
+
+
+def parse_csv_row(row: dict, header_map: dict) -> dict:
+    """Map one CSV row to lead model fields (shared by import paths)."""
+    lead_data = {}
+    for csv_col, model_field in header_map.items():
+        val = (row.get(csv_col) or "").strip()
+        if not val:
+            continue
+        if model_field == "team_size_estimate":
+            raw_team_size = val.lower()
+            if raw_team_size in {"", "unknown", "n/a", "na", "none", "null", "unsure", "not sure", "-"}:
+                continue
+            raw_team_size = raw_team_size.replace(" to ", "-")
+            first_part = raw_team_size.split("-", 1)[0].strip()
+            digits = ""
+            for ch in first_part:
+                if ch.isdigit():
+                    digits += ch
+                elif digits:
+                    break
+            if digits:
+                lead_data[model_field] = int(digits)
+        else:
+            if model_field == "_tags":  # CSV tags column — handled separately
+                lead_data["tags"] = val
+                continue
+            if model_field in ENUM_FIELDS:
+                val = normalize_enum_value(model_field, val)
+            lead_data[model_field] = val
+    if not lead_data.get("full_name") and (lead_data.get("first_name") or lead_data.get("last_name")):
+        lead_data["full_name"] = f"{lead_data.get('first_name', '')} {lead_data.get('last_name', '')}".strip()
+    return lead_data
+
+
+def _dup_key(lead_data: dict) -> tuple | None:
+    """Primary unique-identifier key for duplicate detection."""
+    email = (lead_data.get("email") or "").strip().lower() or None
+    phone = re.sub(r"\D", "", lead_data.get("phone") or "") or None
+    if email:
+        return ("email", email)
+    if phone:
+        return ("phone", phone)
+    return None
+
+
+def _dup_keys(lead_data: dict) -> list[tuple]:
+    """All identifier keys for a row — email first, then phone."""
+    keys = []
+    email = (lead_data.get("email") or "").strip().lower()
+    phone = re.sub(r"\D", "", lead_data.get("phone") or "")
+    if email:
+        keys.append(("email", email))
+    if phone:
+        keys.append(("phone", phone))
+    return keys
+
+
+def find_existing_lead(db: Session, org_id: str, lead_data: dict, exclude_row_keys: set) -> Lead | None:
+    """Find an org lead matching the row's email, else its (normalized) phone.
+    Skips matching on keys already claimed by earlier rows in this import."""
+    for kind, value in _dup_keys(lead_data):
+        if (kind, value) in exclude_row_keys:
+            continue
+        q = db.query(Lead).filter(Lead.organization_id == org_id)
+        if kind == "email":
+            hit = q.filter(func.lower(Lead.email) == value).first()
+        else:
+            digits_expr = func.replace(
+                func.replace(func.replace(func.replace(Lead.phone, " ", ""), "-", ""), "(", ""), ")", ""
+            )
+            hit = q.filter(digits_expr == value).first()
+        if hit:
+            return hit
+    return None
+
+
+def _merge_into(existing: Lead, incoming: dict) -> None:
+    """Merge incoming CSV values into an existing lead (fill-blank wins).
+    Blank/non-provided incoming values never overwrite existing data."""
+    for field, value in incoming.items():
+        if field in {"segment", "segment_id"}:
+            continue
+        current = getattr(existing, field, None)
+        if current is None or (isinstance(current, str) and not current.strip()):
+            setattr(existing, field, value)
+    # Merge tags (union)
+    merged = decode_tags(existing.tags)
+    for tag in normalize_tags(incoming.get("tags")):
+        if tag not in merged:
+            merged.append(tag)
+    existing.tags = json.dumps(merged) if merged else None
+
+
+@api.post("/import/csv/preview")
+async def import_csv_preview(
+    file: UploadFile = File(...),
+    org: OrgContext = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    """Phase 1: parse the CSV, detect duplicates, return a reviewable batch.
+
+    The batch (parsed rows + duplicate matches) is held in memory under a
+    token; the client then POSTs per-row actions to /import/csv/commit.
+    Rows without email AND phone are never treated as duplicates.
+    """
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files accepted")
+
+    content = await file.read()
+    text = content.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no headers")
+
+    header_map = {}
+    for header in reader.fieldnames:
+        clean = header.strip().lower().replace(" ", "_")
+        if clean in CSV_FIELD_MAP:
+            header_map[header] = CSV_FIELD_MAP[clean]
+
+    rows = []          # valid parsed rows
+    errors = []        # unparseable rows
+    claimed_keys = set()  # dup keys claimed by earlier rows in this same file
+    seen_keys = set()     # dup keys appearing multiple times in the file itself
+
+    for i, row in enumerate(reader, start=2):
+        try:
+            lead_data = parse_csv_row(row, header_map)
+            row_tags = normalize_tags(lead_data.pop("tags", ""))
+            key = _dup_key(lead_data)
+            matched = find_existing_lead(db, org.id, lead_data, exclude_row_keys=claimed_keys)
+            if key:
+                claimed_keys.add(key)
+                if matched is None and key in seen_keys:
+                    # duplicate *within* the file — first occurrence stays new,
+                    # later ones are flagged against the first row
+                    first_row = next((r for r in rows if r.get("dup_key") == key), None)
+                    matched = {"in_file": True, "first_row": first_row["row_number"]} if first_row else None
+                seen_keys.add(key)
+            rows.append({
+                "row_number": i,
+                "data": lead_data,
+                "tags": row_tags,
+                "dup_key": key,
+                "duplicate_of": (
+                    {"lead_id": matched.id, "full_name": matched.full_name, "email": matched.email, "phone": matched.phone}
+                    if isinstance(matched, Lead)
+                    else matched  # {"in_file": True, ...} or None
+                ),
+            })
+        except Exception as e:
+            errors.append({"row": i, "error": str(e)})
+
+    token = uuid.uuid4().hex
+    _IMPORT_BATCHES[token] = {"org_id": org.id, "rows": rows, "created": datetime.utcnow()}
+    # Opportunistic cleanup: drop batches older than 1 hour
+    cutoff = datetime.utcnow() - timedelta(hours=1)
+    for t in [t for t, b in _IMPORT_BATCHES.items() if b["created"] < cutoff]:
+        _IMPORT_BATCHES.pop(t, None)
+
+    duplicates = [r for r in rows if r["duplicate_of"]]
+    return {
+        "batch": token,
+        "new_count": len([r for r in rows if not r["duplicate_of"]]),
+        "duplicate_count": len(duplicates),
+        "duplicates": [
+            {
+                "row_number": r["row_number"],
+                "incoming": {k: r["data"].get(k) for k in ("full_name", "business_name", "email", "phone")},
+                "existing": r["duplicate_of"],
+                "incoming_tags": r["tags"],
+            }
+            for r in duplicates
+        ],
+        "errors": errors[:20],
+        "header_map": {k: v for k, v in header_map.items()},
+    }
+
+
+@api.post("/import/csv/commit")
+def import_csv_commit(
+    req: ImportCommitRequest,
+    org: OrgContext = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    """Phase 2: apply the previewed batch with a per-duplicate-row action.
+
+    New (non-duplicate) rows are always inserted. Duplicate rows get the
+    client's chosen strategy: update (incoming fills blanks on the existing
+    lead), merge (same as update + union tags), or skip (leave untouched).
+    """
+    batch = _IMPORT_BATCHES.pop(req.batch, None)
+    if batch is None or batch["org_id"] != org.id:
+        raise HTTPException(status_code=404, detail="Import batch not found or expired — re-upload the CSV")
+
+    inserted = 0
+    updated = 0
+    merged = 0
+    skipped = 0
+
+    for row in batch["rows"]:
+        action = req.actions.get(str(row["row_number"]), "skip")
+        if row["duplicate_of"] and isinstance(row["duplicate_of"], dict) and row["duplicate_of"].get("in_file"):
+            skipped += 1  # in-file duplicates beyond the first occurrence
+            continue
+        if row["duplicate_of"] and action in {"update", "merge", "skip"}:
+            existing = db.query(Lead).filter(
+                Lead.id == row["duplicate_of"]["lead_id"],
+                Lead.organization_id == org.id,
+            ).first()
+            if existing is None:
+                skipped += 1
+                continue
+            if action == "skip":
+                skipped += 1
+            else:
+                incoming = dict(row["data"])
+                incoming["tags"] = row["tags"] if action == "merge" else normalize_tags(row["tags"])
+                if action == "update":
+                    incoming.pop("tags", None)  # plain update: fill blanks only
+                _merge_into(existing, incoming)
+                recalculate_scores(existing)
+                if action == "update":
+                    updated += 1
+                else:
+                    merged += 1
+            continue
+
+        # New lead
+        lead = Lead(owner_user_id=org.user_id, organization_id=org.id, **{
+            k: v for k, v in row["data"].items() if k not in {"tags"}
+        })
+        if row["tags"]:
+            lead.tags = json.dumps(row["tags"])
+        recalculate_scores(lead)
+        db.add(lead)
+        inserted += 1
+
+    db.commit()
+    return {"inserted": inserted, "updated": updated, "merged": merged, "skipped": skipped}
 
 
 # ─── CSV Export ──────────────────────────────────────────────────────────────
@@ -1572,7 +1925,7 @@ def export_csv(
     writer = csv.writer(output)
     writer.writerow([
         "full_name", "business_name", "email", "segment", "niche",
-        "status", "total_score", "priority_tier",
+        "status", "total_score", "priority_tier", "tags",
         "offer_clarity_score", "bottleneck_evidence_score", "buying_signal_score",
         "decision_maker_access_score", "contactability_score", "strategic_fit_score",
         "website_url", "linkedin_url", "contact_path", "location_text",
@@ -1583,7 +1936,7 @@ def export_csv(
     for l in leads:
         writer.writerow([
             l.full_name, l.business_name, l.email, l.segment, l.niche,
-            l.status, l.total_score, l.priority_tier,
+            l.status, l.total_score, l.priority_tier, ", ".join(decode_tags(l.tags)),
             l.offer_clarity_score, l.bottleneck_evidence_score, l.buying_signal_score,
             l.decision_maker_access_score, l.contactability_score, l.strategic_fit_score,
             l.website_url, l.linkedin_url, l.contact_path, l.location_text,

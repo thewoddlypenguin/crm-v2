@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import VariablePicker from "@/components/VariablePicker";
+import TagInput from "@/components/TagInput";
 import { findUnknownVariables } from "@/lib/emailVariables";
 import { ChevronDown, ChevronUp, Mail, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -112,6 +113,8 @@ export default function LeadDetailPage() {
 
   const [lead, setLead] = useState<Lead | null>(null);
   const [segments, setSegments] = useState<SegmentOption[]>([]);
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -138,6 +141,7 @@ export default function LeadDetailPage() {
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   // Sender's email settings (for {{my_*}} variable substitution)
   const [myEmailSettings, setMyEmailSettings] = useState<EmailSettings | null>(null);
+  void myEmailSettings; // reserved for client-side variable hints
 
   // Tab navigation for view mode
   type ViewTab = "contact" | "business" | "notes" | "email" | "history";
@@ -182,6 +186,7 @@ export default function LeadDetailPage() {
       outreach_angle: data.outreach_angle || "",
       do_not_contact: data.do_not_contact ?? false,
     });
+    setTags(data.tags || []);
   };
 
   useEffect(() => {
@@ -195,18 +200,20 @@ export default function LeadDetailPage() {
       }
 
       try {
-        const [leadData, segmentOptions, activityData, templateData, emailSettingsData] = await Promise.all([
+        const [leadData, segmentOptions, activityData, templateData, emailSettingsData, tagData] = await Promise.all([
           api.getLead(id),
           api.listSegments(),
           api.listActivities(id),
           api.listEmailTemplates(),
           api.getEmailSettings(),
+          api.listLeadTags(),
         ]);
 
         if (cancelled) return;
 
         setTemplates(templateData);
         setMyEmailSettings(emailSettingsData);
+        setTagSuggestions(tagData.tags);
         setActivities(activityData);
         setLead(leadData);
         setSegments(segmentOptions);
@@ -363,6 +370,7 @@ export default function LeadDetailPage() {
         personalization_note: form.personalization_note || null,
         outreach_angle: form.outreach_angle || null,
         do_not_contact: form.do_not_contact,
+        tags,
       };
 
       const updated = await api.updateLead(id, data);
@@ -423,7 +431,6 @@ export default function LeadDetailPage() {
     return "muted";
   };
 
-  const statusLabel = lead ? STATUS_LABELS[lead.status] || lead.status : "";
   const segmentLabel = lead?.segment_label || lead?.segment || "No segment";
 
   if (initialLoading) {
@@ -579,6 +586,22 @@ export default function LeadDetailPage() {
                   {detailRow("LinkedIn", lead.linkedin_url)}
                   {detailRow("Location", lead.location_text)}
                   {detailRow("Follow Up Count", lead.follow_up_count)}
+                  <div className="space-y-1 rounded-lg border bg-background p-4 md:col-span-2">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                      Tags
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {(lead.tags || []).length === 0 ? (
+                        <span className="text-sm text-muted-foreground">Not provided</span>
+                      ) : (
+                        lead.tags!.map((t) => (
+                          <span key={t} className="inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+                            {t}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -1063,6 +1086,11 @@ export default function LeadDetailPage() {
                 value={form.business_name}
                 onChange={(e) => set("business_name", e.target.value)}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tags</Label>
+              <TagInput value={tags} onChange={setTags} suggestions={tagSuggestions} />
             </div>
 
             <div className="grid grid-cols-2 gap-4">

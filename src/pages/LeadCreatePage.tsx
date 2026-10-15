@@ -15,11 +15,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import TagInput from "@/components/TagInput";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
 export default function LeadCreatePage() {
   const navigate = useNavigate();
   const [segments, setSegments] = useState<SegmentOption[]>([]);
+  const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -47,6 +50,10 @@ export default function LeadCreatePage() {
       .listSegments()
       .then(setSegments)
       .catch((err) => console.error("Failed to load segments", err));
+    api
+      .listLeadTags()
+      .then((res) => setTagSuggestions(res.tags))
+      .catch((err) => console.error("Failed to load tags", err));
   }, []);
 
   const set = (field: string, value: string) => {
@@ -75,6 +82,7 @@ export default function LeadCreatePage() {
         source_url: form.source_url || null,
         personalization_note: form.personalization_note || null,
         outreach_angle: form.outreach_angle || null,
+        tags,
       };
 
       const lead = await api.createLead(data);
@@ -126,6 +134,11 @@ export default function LeadCreatePage() {
                 value={form.business_name}
                 onChange={(e) => set("business_name", e.target.value)}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tags</Label>
+              <TagInput value={tags} onChange={setTags} suggestions={tagSuggestions} />
             </div>
 
             <div className="grid grid-cols-2 gap-4">

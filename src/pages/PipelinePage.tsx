@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import type { PipelineData, Lead, LeadStatus } from "../types";
+import type { PipelineData, LeadStatus } from "../types";
 import { STATUSES, STATUS_LABELS } from "../types";
 import * as api from "../api";
-import { PriorityBadge, StatusBadge, ScoreBadge, DncBadge } from "@/components/Badges";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PriorityBadge, ScoreBadge, DncBadge } from "@/components/Badges";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
   SelectContent,

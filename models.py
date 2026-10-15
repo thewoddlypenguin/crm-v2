@@ -198,6 +198,10 @@ class Lead(Base):
     # Compliance
     do_not_contact = Column(Boolean, default=False, nullable=False)
 
+    # Tags — stored as a JSON-encoded string so the same model works on
+    # PostgreSQL (deploy) and SQLite (tests) without create_all()ARRAY issues.
+    tags = Column(Text, nullable=True)  # JSON array of lowercase strings
+
     # Pipeline
     status = Column(STATUS_ENUM, default="NEW", index=True)
     last_contacted_at = Column(DateTime, nullable=True)
